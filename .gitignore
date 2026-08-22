@@ -1,0 +1,24 @@
+# build output
+out/
+.gradle-dist/
+
+# release artifacts (portable app-image and ZIP)
+dist/
+*.zip
+
+# assistant workspace data
+.workbuddy/
+
+# SDE binaries (downloaded/regenerated, not committed)
+data/sde/pi-sde.db
+data/sde/eve.db*
+data/sde/csv/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
