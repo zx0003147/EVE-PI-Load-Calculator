@@ -87,6 +87,30 @@ public final class SdeRepository implements AutoCloseable {
         return Optional.ofNullable(id);
     }
 
+    /**
+     * All commodities produced by a planetary schematic.  Tier filtering is
+     * deliberately left to {@link PiTierResolver}; this query only exposes the
+     * SDE graph and never relies on a hand-maintained product-name list.
+     */
+    public List<PiCommodity> findAllProducedCommodities() {
+        List<PiCommodity> out = new ArrayList<>();
+        String sql = "SELECT DISTINCT i.typeID, i.typeName, i.volume "
+                + "FROM planetSchematicsTypeMap m JOIN invTypes i ON i.typeID = m.typeID "
+                + "WHERE m.isInput = 0 ORDER BY i.typeName COLLATE NOCASE, i.typeID";
+        try (PreparedStatement ps = connection.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                PiCommodity commodity = new PiCommodity(rs.getLong("typeID"),
+                        rs.getString("typeName"), readBigDecimal(rs, "volume"));
+                commodityCache.putIfAbsent(commodity.typeId(), commodity);
+                out.add(commodity);
+            }
+            return List.copyOf(out);
+        } catch (SQLException e) {
+            throw new SdeException("Failed listing produced PI commodities", e);
+        }
+    }
+
     /** Look up a commodity (name + volume) by typeID. */
     public PiCommodity getCommodity(long typeId) {
         PiCommodity cached = commodityCache.get(typeId);

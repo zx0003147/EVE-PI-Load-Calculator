@@ -63,4 +63,22 @@ class CopyShoppingListFormatterTest {
                 Biocells 74280
                 Oxides 74280""", CopyShoppingListFormatter.targetInventory(plan()));
     }
+
+    @Test
+    void copyOutputs_mergeIndependentP2AndP3Sections() {
+        InventoryBalancePlan.TierBalance p3 = new InventoryBalancePlan.TierBalance(
+                3, 3, 3600,
+                List.of(material(201L, "Robotics", 4, 5, 12)),
+                new BigDecimal("5"), new BigDecimal("12"), new BigDecimal("7"));
+        InventoryBalancePlan mixed = new InventoryBalancePlan(
+                2, 3600,
+                List.of(material(101L, "Biocells", 10, 15, 20)),
+                List.of(), List.of(), BigDecimal.ZERO, BigDecimal.ZERO,
+                BigDecimal.ZERO, p3);
+
+        assertEquals("Biocells 5\nRobotics 7",
+                CopyShoppingListFormatter.shoppingList(mixed));
+        assertEquals("Biocells 20\nRobotics 12",
+                CopyShoppingListFormatter.targetInventory(mixed));
+    }
 }

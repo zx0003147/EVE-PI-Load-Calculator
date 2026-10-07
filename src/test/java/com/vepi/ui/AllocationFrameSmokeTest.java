@@ -128,6 +128,40 @@ class AllocationFrameSmokeTest {
                 assertTrue(frame.calculateButton.isEnabled(), "all conditions met"));
     }
 
+    @Test
+    void enabledCalculateButton_doClickRunsAllocationAndRendersResult() throws Exception {
+        SwingUtilities.invokeAndWait(() -> frame.addPlanet());
+        PlanetPanel planet = frame.planetPanels.get(0);
+        SwingUtilities.invokeAndWait(() -> {
+            frame.inventoryLoaded(status(BIG_P3));
+            frame.planetTemplateLoaded(planet.id(), controller.loadPlanetTemplate(irdJson));
+            planet.capacityPanel.setCapacityText("20000");
+        });
+        SwingUtilities.invokeAndWait(() -> {
+            assertTrue(frame.calculateButton.isEnabled());
+            assertTrue(frame.calculateButton.getActionListeners().length > 0,
+                    "the displayed button must own the allocation listener");
+            frame.calculateButton.doClick();
+        });
+
+        boolean rendered = false;
+        for (int attempt = 0; attempt < 100 && !rendered; attempt++) {
+            Thread.sleep(25);
+            AtomicReference<Boolean> state = new AtomicReference<>(false);
+            SwingUtilities.invokeAndWait(() -> state.set(
+                    frame.resultPanel.sections.size() == 1
+                            && "Calculate Allocation".equals(frame.calculateButton.getText())));
+            rendered = state.get();
+        }
+        assertTrue(rendered, "doClick must complete the worker and render an allocation card");
+        SwingUtilities.invokeAndWait(() -> {
+            assertEquals(46L, frame.resultPanel.sections.get(0).view.allocation().blockCount());
+            assertTrue(frame.calculateButton.isEnabled(), "button is reusable after calculation");
+            assertEquals("Allocate shared inventory across all planets (fair runtime)",
+                    frame.calculateButton.getToolTipText());
+        });
+    }
+
     // ---- rendering: pure P4 template keeps the old P3 grouping + numbers ----
 
     @Test
@@ -336,6 +370,79 @@ class AllocationFrameSmokeTest {
         SwingUtilities.invokeAndWait(() ->
                 assertTrue(frame.calculateButton.isEnabled(),
                         "survivor is still fully configured"));
+    }
+
+    @Test
+    void duplicatePlanet_copiesValidStateButKeepsUiStateIndependent() throws Exception {
+        SwingUtilities.invokeAndWait(() -> frame.inventoryLoaded(status(p2Stock(50_000L))));
+        AtomicReference<PlanetPanel> sourceRef = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> {
+            PlanetPanel source = frame.addPlanet();
+            source.templatePanel.setTemplateText(fullChainJson);
+            frame.planetTemplateLoaded(source.id(), controller.loadPlanetTemplate(fullChainJson));
+            source.capacityPanel.setCapacityText("44000");
+            sourceRef.set(source);
+            source.duplicateButton.doClick();
+        });
+
+        PlanetPanel source = sourceRef.get();
+        PlanetPanel copy = frame.planetPanels.get(1);
+        SwingUtilities.invokeAndWait(() -> {
+            assertEquals(2, frame.planetPanels.size());
+            assertEquals(fullChainJson, copy.templatePanel.getTemplateText());
+            assertTrue(copy.templateLoaded());
+            assertEquals(source.loadedTemplate().summary(), copy.loadedTemplate().summary());
+            assertEquals("44000", copy.capacityText());
+            assertTrue(copy.capacityValid());
+            assertTrue(frame.calculateButton.isEnabled());
+
+            copy.capacityPanel.setCapacityText("33000");
+            assertEquals("44000", source.capacityText(), "capacity fields must be independent");
+            copy.templatePanel.clearAll();
+            assertTrue(source.templateLoaded(), "clearing the copy must not clear the source");
+            assertFalse(copy.templateLoaded());
+        });
+    }
+
+    @Test
+    void duplicateValidPlanet_canCalculateImmediatelyForTwoPlanets() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            frame.inventoryLoaded(status(BIG_P3));
+            PlanetPanel source = frame.addPlanet();
+            source.templatePanel.setTemplateText(irdJson);
+            frame.planetTemplateLoaded(source.id(), controller.loadPlanetTemplate(irdJson));
+            source.capacityPanel.setCapacityText("20000");
+            frame.duplicatePlanet(source.id());
+            assertTrue(frame.calculateButton.isEnabled());
+            frame.calculateButton.doClick();
+        });
+
+        boolean rendered = false;
+        for (int attempt = 0; attempt < 100 && !rendered; attempt++) {
+            Thread.sleep(25);
+            AtomicReference<Boolean> state = new AtomicReference<>(false);
+            SwingUtilities.invokeAndWait(() -> state.set(frame.resultPanel.sections.size() == 2));
+            rendered = state.get();
+        }
+        assertTrue(rendered, "duplicated valid planets must calculate without reloading templates");
+    }
+
+    @Test
+    void duplicateInvalidPlanet_copiesTextWithoutInventingLoadedState() throws Exception {
+        SwingUtilities.invokeAndWait(() -> {
+            frame.inventoryLoaded(status(BIG_P3));
+            PlanetPanel source = frame.addPlanet();
+            source.templatePanel.setTemplateText("unloaded draft JSON");
+            source.capacityPanel.setCapacityText("44000");
+            frame.duplicatePlanet(source.id());
+        });
+        PlanetPanel copy = frame.planetPanels.get(1);
+        SwingUtilities.invokeAndWait(() -> {
+            assertEquals("unloaded draft JSON", copy.templatePanel.getTemplateText());
+            assertFalse(copy.templateLoaded());
+            assertTrue(copy.capacityValid());
+            assertFalse(frame.calculateButton.isEnabled());
+        });
     }
 
     // ---- helpers ----

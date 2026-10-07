@@ -6,6 +6,8 @@ import com.vepi.allocation.MultiPlanetAllocationPlanner;
 import com.vepi.allocation.PlanetRequest;
 import com.vepi.balance.ProductionBlock;
 import com.vepi.balance.ProductionBlockCalculator;
+import com.vepi.balancing.P4BalanceRecipe;
+import com.vepi.balancing.P4BalanceRecipeResolver;
 import com.vepi.capacity.ProductionCapacityExtractor;
 import com.vepi.domain.PiCommodity;
 import com.vepi.domain.TemplateProductionFacility;
@@ -369,6 +371,20 @@ public final class PiCalculatorController implements AutoCloseable {
     /** Tier lookup via the shared SDE (see {@link #commodityOf}). */
     public synchronized int tierOf(long typeId) {
         return tiers.tierOf(typeId);
+    }
+
+    /** All P4 products discovered from the current SDE, name-sorted and unique by typeID. */
+    public synchronized List<PiCommodity> p4Products() {
+        return sde.findAllProducedCommodities().stream()
+                .filter(c -> tiers.tierOf(c.typeId()) == 4)
+                .sorted(Comparator.comparing(PiCommodity::name, String.CASE_INSENSITIVE_ORDER)
+                        .thenComparingLong(PiCommodity::typeId))
+                .toList();
+    }
+
+    /** Resolve the exact independent P2/P3 balance vectors for one P4 product. */
+    public synchronized P4BalanceRecipe p4BalanceRecipe(long p4TypeId) {
+        return new P4BalanceRecipeResolver(sde, tiers).resolve(p4TypeId);
     }
 
     /** The block volume (minimum capacity for one production block), if a template is loaded. */

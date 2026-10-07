@@ -31,6 +31,9 @@ public final class InventoryPanel extends JPanel {
 
         /** Inventory state must be reset (Clear clicked, or blank parse). */
         void inventoryReset();
+
+        /** Any edit invalidates a previously calculated result until Parse runs again. */
+        default void inventoryTextChanged() { }
     }
 
     private final Listener listener;
@@ -44,14 +47,21 @@ public final class InventoryPanel extends JPanel {
 
     InventoryPanel(Listener listener) {
         this.listener = listener;
-        setBorder(BorderFactory.createTitledBorder("Current Inventory"));
+        setBorder(BorderFactory.createEmptyBorder());
         setLayout(new BorderLayout(UiConstants.INNER_PADDING, UiConstants.ROW_GAP));
+        add(UiComponents.sectionHeader("Current Inventory",
+                "Paste one ‘item quantity’ pair per line."), BorderLayout.NORTH);
 
         textArea = new JTextArea();
         textArea.setFont(UiConstants.MONO_FONT);
         textArea.setLineWrap(true);
         textArea.setWrapStyleWord(false);
         textArea.setTabSize(8);
+        textArea.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { listener.inventoryTextChanged(); }
+            @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { listener.inventoryTextChanged(); }
+            @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { listener.inventoryTextChanged(); }
+        });
         JScrollPane scroll = new JScrollPane(textArea);
         scroll.setPreferredSize(new Dimension(0, 92));
 
@@ -70,10 +80,13 @@ public final class InventoryPanel extends JPanel {
         warning.setFont(UiConstants.METRIC_CAPTION_FONT);
 
         pasteButton = new JButton("Paste");
+        UiComponents.secondaryButton(pasteButton);
         pasteButton.addActionListener(e -> pasteFromClipboard());
         parseButton = new JButton("Parse");
+        UiComponents.primaryButton(parseButton);
         parseButton.addActionListener(e -> onParseClicked());
         clearButton = new JButton("Clear");
+        UiComponents.secondaryButton(clearButton);
         clearButton.addActionListener(e -> clearAll());
 
         JPanel buttonRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT,
@@ -87,11 +100,11 @@ public final class InventoryPanel extends JPanel {
         messages.add(error, BorderLayout.NORTH);
         messages.add(warning, BorderLayout.SOUTH);
 
-        JPanel south = new JPanel(new BorderLayout(8, 2));
+        JPanel south = new JPanel(new BorderLayout(8, 4));
         south.setOpaque(false);
-        south.add(status, BorderLayout.CENTER);
-        south.add(messages, BorderLayout.SOUTH);
-        south.add(buttonRow, BorderLayout.EAST);
+        south.add(status, BorderLayout.NORTH);
+        south.add(messages, BorderLayout.CENTER);
+        south.add(buttonRow, BorderLayout.SOUTH);
         add(south, BorderLayout.SOUTH);
     }
 

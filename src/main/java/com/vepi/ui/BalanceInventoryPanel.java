@@ -2,405 +2,493 @@ package com.vepi.ui;
 
 import com.vepi.app.BalanceInventoryController;
 import com.vepi.app.PiCalculatorController;
-import com.vepi.balancing.BalanceException;
 import com.vepi.balancing.InventoryBalanceMaterial;
 import com.vepi.balancing.InventoryBalancePlan;
+import com.vepi.balancing.P4BalanceRecipe;
 import com.vepi.inventory.InventorySnapshot;
-import com.vepi.template.TemplateException;
 
-import javax.swing.BorderFactory;
-import javax.swing.JButton;
-import javax.swing.JComponent;
-import javax.swing.JLabel;
-import javax.swing.JPanel;
-import javax.swing.JScrollPane;
-import javax.swing.JTable;
-import javax.swing.JTextArea;
-import javax.swing.SwingUtilities;
-import javax.swing.SwingWorker;
-import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
-import java.awt.BorderLayout;
-import java.awt.Component;
-import java.awt.Dimension;
-import java.awt.GridLayout;
-import java.awt.Toolkit;
+import java.awt.*;
 import java.awt.datatransfer.StringSelection;
-import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 
-/**
- * The <b>Balance Inventory</b> tab — an independent second product function
- * next to Load Allocation.
- *
- * <p>Question answered: “my current P2 stock is unbalanced for this template.
- * To consume ALL of it with whole sustainable blocks, which P2 must I top up,
- * to what target level, and what shopping list do I need?”
- *
- * <p>Layout: a left input column (inventory, template, Calculate) and a right
- * result column whose visual center is the four-metric strip (Target Blocks ·
- * Production Time · Final Output · Additional P2) above the BALANCE TABLE —
- * sized so the typical nine P2 rows are visible at once. Unused inventory and
- * the per-line diagnostics live behind collapsed toggles.
- *
- * <p>No planet capacity, no multi-planet split — one inventory, one template.
- * Own inventory and template inputs (spec §21 option A: no state sharing with
- * the Load Allocation tab). Copy buttons share only the
- * {@link CopyShoppingListFormatter} formatting discipline.
- *
- * <p>Threading mirrors AllocationFrame: parse/load on SwingWorkers, rendering
- * on the EDT. The sync render methods ({@code inventoryLoaded},
- * {@code templateLoaded}, {@code showPlan}, {@code showError}) are the same
- * entry points the workers call — the smoke test drives them directly.
- */
+/** Product-driven, independent P2/P3 inventory balancing workbench. */
 public final class BalanceInventoryPanel extends JPanel {
-
     private final BalanceInventoryController controller;
-
-    final InventoryPanel inventoryPanel;       // package-visible for tests
-    final TemplatePanel templatePanel;         // package-visible for tests
-    final JButton calculateButton;             // package-visible for tests
-    final JTextArea summary = new JTextArea(" ");   // package-visible for tests (details area)
-    final DefaultTableModel balanceModel;      // package-visible for tests
+    final InventoryPanel inventoryPanel;
+    final JComboBox<BalanceInventoryController.P4Product> p4Combo = new JComboBox<>();
+    final JButton calculateButton = new JButton("Calculate Balance");
+    final JButton copyShoppingButton = new JButton("Copy Shopping List");
+    final JButton copyTargetButton = new JButton("Copy Target Inventory");
+    final JTextArea summary = new JTextArea(" ");
+    final JPanel recipeHierarchyPanel = new JPanel();
+    final DefaultTableModel p2Model = materialModel();
+    final DefaultTableModel p3Model = materialModel();
+    final DefaultTableModel balanceModel = p2Model;
     final DefaultTableModel unusedModel = new DefaultTableModel(
             new Object[]{"Unused Item", "Quantity", "Tier"}, 0) {
         @Override public boolean isCellEditable(int r, int c) { return false; }
     };
-    final DefaultTableModel outputModel = new DefaultTableModel(
-            new Object[]{"Final Output", "Quantity"}, 0) {
-        @Override public boolean isCellEditable(int r, int c) { return false; }
-    };
 
-    /** Raw Need-to-Add values parallel to {@link #balanceModel}'s rows (renderer). */
-    private final List<Long> balanceAdds = new ArrayList<>();
-
-    private JTable balanceTable;
-
-    // Metric strip labels (the result page's visual headline).
-    private final JLabel metricBlocksValue = blankMetric();
-    private final JLabel metricTimeValue = blankMetric();
-    private final JLabel metricOutputValue = blankMetric();
-    private final JLabel metricAdditionalValue = blankMetric();
-
-    private final CollapsibleSection unusedSection;
-    private final JLabel unusedCaption = new JLabel(" ");
     private final JLabel errorLabel = new JLabel(" ");
-
-    private boolean inventoryReady = false;
+    private final JLabel totalPurchaseValue = metricValue();
+    private final JLabel p2PurchaseValue = metricValue();
+    private final JLabel p3PurchaseValue = metricValue();
+    private final JLabel productStatus = new JLabel("Select a P4 product from the SDE.");
+    private TierView p2View;
+    private TierView p3View;
+    private RecipeView recipeView;
+    private final JLabel unusedCaption = new JLabel(" ");
+    private boolean inventoryReady;
+    private boolean changingProducts;
     private InventorySnapshot inventory;
-    private PiCalculatorController.PlanetTemplate template;
+    private InventoryBalancePlan lastPlan;
+    private P4BalanceRecipe selectedRecipe;
 
-    /** One balance run's render inputs. */
-    record BalanceRun(InventoryBalancePlan plan) {
-    }
+    record BalanceRun(InventoryBalancePlan plan) {}
 
     public BalanceInventoryPanel(BalanceInventoryController controller) {
         this.controller = controller;
-        setLayout(new BorderLayout(0, 0));
+        setLayout(new BorderLayout());
+        setBackground(UiConstants.PAGE_BACKGROUND);
+        add(UiComponents.pageHeader("Balance Inventory",
+                "Choose a P4 product; its P3 and P2 requirements are resolved directly from the SDE."),
+                BorderLayout.NORTH);
 
-        balanceModel = new DefaultTableModel(
-                new Object[]{"Material", "Per Block", "Current", "Target", "Need to Add"}, 0) {
-            @Override public boolean isCellEditable(int r, int c) { return false; }
-        };
-
-        // ---- LEFT COLUMN: own inputs (spec §21 A) ----
         inventoryPanel = new InventoryPanel(new InventoryPanel.Listener() {
-            @Override
-            public void inventoryTextSubmitted(String text) {
-                onInventoryTextSubmitted(text);
-            }
-
-            @Override
-            public void inventoryReset() {
-                onInventoryReset();
+            @Override public void inventoryTextSubmitted(String text) { onInventoryTextSubmitted(text); }
+            @Override public void inventoryReset() { onInventoryReset(); }
+            @Override public void inventoryTextChanged() { invalidateInventoryEdit(); }
+        });
+        populateProducts();
+        p4Combo.setMaximumRowCount(18);
+        p4Combo.setSelectedIndex(-1);
+        p4Combo.addActionListener(e -> {
+            if (!changingProducts) {
+                onProductChanged();
             }
         });
 
-        templatePanel = new TemplatePanel(new TemplatePanel.Listener() {
-            @Override
-            public void templateTextSubmitted(String text) {
-                onTemplateTextSubmitted(text);
-            }
-
-            @Override
-            public void templateFileChosen(Path file) {
-                onTemplateFileChosen(file);
-            }
-
-            @Override
-            public void templateReset() {
-                onTemplateReset();
-            }
-        });
-
-        calculateButton = new JButton("Calculate Balance");
+        UiComponents.primaryButton(calculateButton);
         calculateButton.setEnabled(false);
-        calculateButton.setFont(UiConstants.BODY_BOLD_FONT.deriveFont(14f));
-        calculateButton.setToolTipText("Top up current P2 stock to whole sustainable blocks");
         calculateButton.addActionListener(e -> onCalculate());
-        JPanel calcBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0,
-                UiConstants.ROW_GAP));
+
+        VerticalScrollablePanel leftContent = new VerticalScrollablePanel();
+        leftContent.setBackground(UiConstants.CARD_BACKGROUND);
+        leftContent.setLayout(new BoxLayout(leftContent, BoxLayout.Y_AXIS));
+        leftContent.setBorder(UiComponents.cardBorder());
+        inventoryPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        leftContent.add(inventoryPanel);
+        leftContent.add(Box.createVerticalStrut(UiConstants.SECTION_GAP));
+        JPanel product = buildProductSection();
+        align(product);
+        leftContent.add(product);
+        leftContent.add(Box.createVerticalStrut(UiConstants.SECTION_GAP));
+        JPanel calcBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        calcBar.setOpaque(false);
         calcBar.add(calculateButton);
+        align(calcBar);
+        leftContent.add(calcBar);
 
-        JPanel left = new JPanel(new BorderLayout(0, UiConstants.SECTION_GAP));
-        left.setBorder(BorderFactory.createEmptyBorder(UiConstants.INNER_PADDING,
-                UiConstants.INNER_PADDING, UiConstants.INNER_PADDING, UiConstants.CARD_GAP));
-        JPanel inputs = new JPanel();
-        inputs.setLayout(new javax.swing.BoxLayout(inputs, javax.swing.BoxLayout.Y_AXIS));
-        inputs.setOpaque(false);
-        inputs.add(inventoryPanel);
-        inputs.add(javax.swing.Box.createVerticalStrut(UiConstants.SECTION_GAP));
-        inputs.add(templatePanel);
-        left.add(inputs, BorderLayout.NORTH);
-        left.add(calcBar, BorderLayout.CENTER);
+        JScrollPane leftScroll = pageScroll(leftContent, UiConstants.CARD_BACKGROUND);
+        p2View = new TierView("P2 Balance", "P2 needed across the selected P4's P3 recipes", p2Model);
+        p3View = new TierView("P3 Balance", "Direct P3 inputs of the selected P4 recipe", p3Model);
+        recipeView = new RecipeView();
+        VerticalScrollablePanel results = buildResults();
+        JScrollPane resultsScroll = pageScroll(results, UiConstants.PAGE_BACKGROUND);
+        MouseWheelForwarder.install(leftContent, leftScroll);
+        MouseWheelForwarder.install(results, resultsScroll);
 
-        // ---- RIGHT COLUMN: results ----
-        JComponent results = buildResultsPanel();
-        JScrollPane right = new JScrollPane(results);
-        right.getVerticalScrollBar().setUnitIncrement(16);
-        right.setBorder(BorderFactory.createEmptyBorder(UiConstants.INNER_PADDING,
-                UiConstants.CARD_GAP, UiConstants.INNER_PADDING, UiConstants.INNER_PADDING));
-
-        javax.swing.JSplitPane split =
-                new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, left, right);
-        split.setResizeWeight(0.40);
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftScroll, resultsScroll);
+        split.setResizeWeight(0.32);
         split.setContinuousLayout(true);
-        split.setBorder(null);
+        split.setDividerLocation(0.32);
+        split.setBorder(BorderFactory.createEmptyBorder(0, UiConstants.INNER_PADDING,
+                UiConstants.INNER_PADDING, UiConstants.INNER_PADDING));
         add(split, BorderLayout.CENTER);
-
-        // Unused inventory lives in a collapsed secondary section.
-        JTable unusedTable = new JTable(unusedModel);
-        styleTable(unusedTable);
-        JPanel unusedWrapper = new JPanel(new BorderLayout(0, UiConstants.ROW_GAP));
-        unusedWrapper.setOpaque(false);
-        unusedWrapper.add(unusedCaption, BorderLayout.NORTH);
-        JScrollPane unusedScroll = new JScrollPane(unusedTable);
-        unusedScroll.setPreferredSize(new Dimension(0,
-                3 * (unusedTable.getRowHeight() + 1) + 26));
-        unusedWrapper.add(unusedScroll, BorderLayout.CENTER);
-        unusedSection = new CollapsibleSection("Show Unused Inventory", unusedWrapper, false);
-        attachUnusedSection();
+        clearResults();
     }
 
-    /** The unused section is created after the results panel — slot it in. */
-    private void attachUnusedSection() {
-        resultsColumn.add(unusedSection, 1);   // right below the copy bar
+    private JPanel buildProductSection() {
+        JPanel section = new JPanel(new BorderLayout(0, UiConstants.ROW_GAP));
+        section.setOpaque(false);
+        section.add(UiComponents.sectionHeader("P4 Product",
+                "Discovered from the current SDE; typeID is retained internally."), BorderLayout.NORTH);
+        p4Combo.setPrototypeDisplayValue(new BalanceInventoryController.P4Product(0,
+                "Organic Mortar Applicators        "));
+        section.add(p4Combo, BorderLayout.CENTER);
+        productStatus.setForeground(UiConstants.SECONDARY);
+        productStatus.setFont(UiConstants.METRIC_CAPTION_FONT);
+        section.add(productStatus, BorderLayout.SOUTH);
+        return section;
     }
 
-    private final JPanel resultsColumn = new JPanel();
-    private JComponent copyBar;
+    private void populateProducts() {
+        changingProducts = true;
+        try {
+            p4Combo.removeAllItems();
+            List<BalanceInventoryController.P4Product> products = controller.p4Products();
+            for (var product : products) p4Combo.addItem(product);
+            if (products.isEmpty()) {
+                productStatus.setText("No Tier 4 products were found in the SDE.");
+                productStatus.setForeground(UiConstants.ERROR);
+            }
+        } catch (RuntimeException e) {
+            productStatus.setText("Unable to load P4 products: " + messageOf(e));
+            productStatus.setForeground(UiConstants.ERROR);
+        } finally {
+            changingProducts = false;
+        }
+    }
 
-    // ---- results panel ----
+    private void onProductChanged() {
+        clearResults();
+        updateProductStatus();
+        selectedRecipe = null;
+        if (recipeView != null) recipeView.clear();
+        var product = (BalanceInventoryController.P4Product) p4Combo.getSelectedItem();
+        if (product != null) {
+            try {
+                selectedRecipe = controller.recipe(product.typeId());
+                if (recipeView != null) recipeView.show(selectedRecipe);
+            } catch (RuntimeException e) {
+                if (recipeView != null) recipeView.showError("Unable to resolve recipe: " + messageOf(e));
+                errorLabel.setText("<html>" + escape(messageOf(e)) + "</html>");
+            }
+        }
+        updateCalculateEnabled();
+    }
 
-    private JComponent buildResultsPanel() {
-        resultsColumn.setLayout(new javax.swing.BoxLayout(resultsColumn,
-                javax.swing.BoxLayout.Y_AXIS));
-        resultsColumn.setOpaque(false);
-
+    private VerticalScrollablePanel buildResults() {
+        VerticalScrollablePanel column = new VerticalScrollablePanel();
+        column.setBackground(UiConstants.PAGE_BACKGROUND);
+        column.setLayout(new FullWidthStackLayout());
+        column.setBorder(BorderFactory.createEmptyBorder(0, UiConstants.CARD_GAP,
+                UiConstants.INNER_PADDING, 0));
         errorLabel.setForeground(UiConstants.ERROR);
         errorLabel.setFont(UiConstants.BODY_FONT);
-        errorLabel.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        resultsColumn.add(errorLabel);
+        align(errorLabel);
+        column.add(errorLabel);
 
-        resultsColumn.add(buildMetricStrip());
+        JPanel totalCard = UiComponents.card();
+        totalCard.setLayout(new BorderLayout(18, UiConstants.ROW_GAP));
+        totalCard.add(UiComponents.sectionHeader("Purchase Summary",
+                "P2 and P3 are balanced independently; neither tier compensates for the other."),
+                BorderLayout.NORTH);
+        JPanel purchaseMetrics = new JPanel(new GridLayout(1, 3, UiConstants.CARD_GAP, 0));
+        purchaseMetrics.setOpaque(false);
+        purchaseMetrics.add(UiComponents.metric("P2 PURCHASE VOLUME", p2PurchaseValue));
+        purchaseMetrics.add(UiComponents.metric("P3 PURCHASE VOLUME", p3PurchaseValue));
+        purchaseMetrics.add(UiComponents.metric("TOTAL", totalPurchaseValue));
+        totalCard.add(purchaseMetrics, BorderLayout.CENTER);
+        align(totalCard);
+        column.add(totalCard);
+        column.add(Box.createVerticalStrut(UiConstants.CARD_GAP));
+        column.add(recipeView.card);
+        column.add(Box.createVerticalStrut(UiConstants.CARD_GAP));
+        column.add(p2View.card);
+        column.add(Box.createVerticalStrut(UiConstants.CARD_GAP));
+        column.add(p3View.card);
+        column.add(Box.createVerticalStrut(UiConstants.CARD_GAP));
 
-        resultsColumn.add(sectionTitle("BALANCE TABLE"));
-        balanceTable = new JTable(balanceModel);
-        styleTable(balanceTable);
-        applyColumnWidths(balanceTable, 0.35, 0.15, 0.17, 0.17, 0.16);
-        // "Need to Add" — bold when there is something to buy, em dash at zero.
-        balanceTable.getColumnModel().getColumn(4).setCellRenderer(new DefaultTableCellRenderer() {
-            @Override
-            public Component getTableCellRendererComponent(JTable t, Object value,
-                    boolean sel, boolean focus, int row, int col) {
-                Component c = super.getTableCellRendererComponent(t, value, sel, focus, row, col);
-                long add = row >= 0 && row < balanceAdds.size() ? balanceAdds.get(row) : 0;
-                c.setFont(add > 0 ? UiConstants.BODY_BOLD_FONT : UiConstants.BODY_FONT);
-                return c;
-            }
-        });
-        JScrollPane scroll = new JScrollPane(balanceTable);
-        scroll.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        scroll.setBorder(BorderFactory.createEmptyBorder(0, 2, 2, 2));
-        resultsColumn.add(scroll);
+        JPanel copyBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        copyBar.setOpaque(false);
+        UiComponents.secondaryButton(copyShoppingButton);
+        UiComponents.secondaryButton(copyTargetButton);
+        copyShoppingButton.addActionListener(e -> copyPlan(true));
+        copyTargetButton.addActionListener(e -> copyPlan(false));
+        copyBar.add(copyShoppingButton);
+        copyBar.add(copyTargetButton);
+        align(copyBar);
+        column.add(copyBar);
 
-        copyBar = buildCopyBar();
-        resultsColumn.add(copyBar);
-
-        // Collapsed diagnostics: the original per-line summary + expected outputs.
-        JPanel diagnostics = new JPanel();
-        diagnostics.setLayout(new javax.swing.BoxLayout(diagnostics,
-                javax.swing.BoxLayout.Y_AXIS));
-        diagnostics.setOpaque(false);
+        JTable unusedTable = new JTable(unusedModel);
+        UiComponents.table(unusedTable);
+        JPanel unusedWrapper = new JPanel(new BorderLayout(0, UiConstants.ROW_GAP));
+        unusedWrapper.setOpaque(false);
+        unusedCaption.setForeground(UiConstants.SECONDARY);
+        unusedWrapper.add(unusedCaption, BorderLayout.NORTH);
+        unusedWrapper.add(compactTableScroll(unusedTable, 0), BorderLayout.CENTER);
+        align(unusedWrapper);
+        column.add(new CollapsibleSection("Show Unused Inventory", unusedWrapper, false));
 
         summary.setEditable(false);
         summary.setOpaque(false);
         summary.setFont(UiConstants.MONO_FONT);
-        summary.setBorder(BorderFactory.createEmptyBorder(2, 6, 2, 2));
-        diagnostics.add(summary);
-
-        diagnostics.add(sectionTitle("EXPECTED OUTPUTS"));
-        JTable outTable = new JTable(outputModel);
-        styleTable(outTable);
-        outTable.setPreferredScrollableViewportSize(new Dimension(0,
-                Math.max(1, 1) * (outTable.getRowHeight() + 1) + 26));
-        JScrollPane outScroll = new JScrollPane(outTable);
-        outScroll.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        diagnostics.add(outScroll);
-        resultsColumn.add(new CollapsibleSection("Show Details", diagnostics, false));
-
-        return resultsColumn;
+        JPanel details = new JPanel(new BorderLayout());
+        details.setOpaque(false);
+        details.add(summary, BorderLayout.CENTER);
+        align(details);
+        column.add(new CollapsibleSection("Show Details", details, false));
+        return column;
     }
 
-    private JPanel buildMetricStrip() {
-        JPanel strip = new JPanel(new GridLayout(1, 4, UiConstants.CARD_GAP, 0));
-        strip.setOpaque(false);
-        strip.add(metricCell("TARGET BLOCKS", metricBlocksValue));
-        strip.add(metricCell("PRODUCTION TIME", metricTimeValue));
-        strip.add(metricCell("FINAL OUTPUT", metricOutputValue));
-        strip.add(metricCell("ADDITIONAL P2", metricAdditionalValue));
-        strip.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        strip.setBorder(BorderFactory.createEmptyBorder(0, 0, UiConstants.SECTION_GAP, 0));
-        return strip;
+    private static JScrollPane pageScroll(Component content, Color background) {
+        JScrollPane scroll = new JScrollPane(content,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        scroll.setBorder(null);
+        scroll.getViewport().setBackground(background);
+        scroll.getVerticalScrollBar().setUnitIncrement(18);
+        return scroll;
     }
 
-    private static JPanel metricCell(String caption, JLabel value) {
-        JPanel cell = new JPanel(new GridLayout(2, 1, 0, 1));
-        cell.setOpaque(false);
-        JLabel cap = new JLabel(caption);
-        cap.setFont(UiConstants.METRIC_CAPTION_FONT);
-        cap.setForeground(UiConstants.SECONDARY);
-        value.setFont(UiConstants.METRIC_FONT);
-        cell.add(cap);
-        cell.add(value);
-        return cell;
+    private static void align(JComponent component) {
+        component.setAlignmentX(Component.LEFT_ALIGNMENT);
+        component.setMaximumSize(new Dimension(Integer.MAX_VALUE, component.getMaximumSize().height));
     }
 
-    private static JLabel blankMetric() {
-        return new JLabel("\u2014");
+    private static DefaultTableModel materialModel() {
+        return new DefaultTableModel(
+                new Object[]{"Material", "Per Block", "Current", "Target", "Need to Add"}, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
     }
 
-    private JComponent buildCopyBar() {
-        JPanel copyBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, UiConstants.ROW_GAP));
-        JButton copyShopping = new JButton("Copy Shopping List");
-        copyShopping.setToolTipText("Only the P2 items you still need to add");
-        copyShopping.addActionListener(e -> copyToClipboard(
-                CopyShoppingListFormatter.shoppingList(lastPlan), "Shopping list"));
-        JButton copyTarget = new JButton("Copy Target Inventory");
-        copyTarget.setToolTipText("Every balanced P2 at its final target level");
-        copyTarget.addActionListener(e -> copyToClipboard(
-                CopyShoppingListFormatter.targetInventory(lastPlan), "Target inventory"));
-        copyBar.add(copyShopping);
-        copyBar.add(copyTarget);
-        copyBar.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        return copyBar;
-    }
+    private static JLabel metricValue() { return new JLabel("—"); }
 
-    private static JLabel sectionTitle(String text) {
-        JLabel label = new JLabel(text);
-        label.setFont(UiConstants.SECTION_FONT);
-        label.setForeground(UiConstants.SECONDARY);
-        label.setBorder(BorderFactory.createEmptyBorder(10, 2, 3, 2));
-        label.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
-        return label;
-    }
+    private final class TierView {
+        final JPanel card = UiComponents.card();
+        final JLabel blocks = metricValue();
+        final JLabel additional = metricValue();
+        final JLabel p4PerBlock = metricValue();
+        final JLabel equivalentP4 = metricValue();
+        final JLabel note = new JLabel(" ");
+        final JTable table;
+        final JScrollPane scroll;
 
-    private static void styleTable(JTable table) {
-        table.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
-        table.setRowHeight(table.getRowHeight() + 2);
-    }
+        TierView(String title, String description, DefaultTableModel model) {
+            card.setLayout(new BorderLayout(0, UiConstants.ROW_GAP));
+            card.add(UiComponents.sectionHeader(title, description), BorderLayout.NORTH);
+            JPanel content = new JPanel();
+            content.setOpaque(false);
+            content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+            JPanel metrics = new JPanel(new GridLayout(1, 4, UiConstants.CARD_GAP, 0));
+            metrics.setOpaque(false);
+            metrics.add(UiComponents.metric("TARGET BLOCKS", blocks));
+            metrics.add(UiComponents.metric("P4 UNITS / BLOCK", p4PerBlock));
+            metrics.add(UiComponents.metric("EQUIVALENT P4 OUTPUT", equivalentP4));
+            metrics.add(UiComponents.metric("ADDITIONAL VOLUME", additional));
+            align(metrics);
+            content.add(metrics);
+            content.add(Box.createVerticalStrut(UiConstants.ROW_GAP));
+            note.setFont(UiConstants.BODY_FONT);
+            note.setForeground(UiConstants.SECONDARY);
+            align(note);
+            content.add(note);
+            table = new JTable(model);
+            UiComponents.table(table);
+            table.setFillsViewportHeight(false);
+            table.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
+            scroll = compactTableScroll(table, 0);
+            align(scroll);
+            content.add(scroll);
+            card.add(content, BorderLayout.CENTER);
+            align(card);
+        }
 
-    private static void applyColumnWidths(JTable table, double... fractions) {
-        for (int i = 0; i < table.getColumnCount() && i < fractions.length; i++) {
-            table.getColumnModel().getColumn(i).setPreferredWidth((int) Math.round(1000 * fractions[i]));
+        void show(InventoryBalancePlan.TierBalance balance) {
+            blocks.setText(Formats.amount(balance.targetBlocks()));
+            p4PerBlock.setText(Formats.amount(balance.p4UnitsPerBalanceBlock()));
+            equivalentP4.setText(Formats.amount(balance.equivalentP4Units()));
+            additional.setText(Formats.volume(balance.totalAdditionalVolume()));
+            DefaultTableModel model = (DefaultTableModel) table.getModel();
+            model.setRowCount(0);
+            boolean hasStock = false;
+            for (InventoryBalanceMaterial material : balance.materials()) {
+                hasStock |= material.currentQuantity() > 0;
+                model.addRow(new Object[]{material.commodity().name(),
+                        Formats.amount(material.requiredPerBlock()), Formats.amount(material.currentQuantity()),
+                        Formats.amount(material.targetQuantity()), Formats.addCell(material.addQuantity())});
+            }
+            String blockMeaning = "1 block = " + balance.p4RecipeCyclesPerBalanceBlock()
+                    + (balance.p4RecipeCyclesPerBalanceBlock() == 1 ? " P4 recipe cycle" : " P4 recipe cycles")
+                    + " = " + balance.p4UnitsPerBalanceBlock() + " "
+                    + (balance.p4UnitsPerBalanceBlock() == 1 ? "P4 unit" : "P4 units");
+            note.setText(blockMeaning + (!hasStock
+                    ? " · No related P" + balance.tier()
+                    + " stock found — target remains 0; no purchase is proposed."
+                    : ""));
+            resizeTable(scroll, table, model.getRowCount());
+        }
+
+        void clear(int tier) {
+            blocks.setText("—");
+            p4PerBlock.setText("—");
+            equivalentP4.setText("—");
+            additional.setText("—");
+            ((DefaultTableModel) table.getModel()).setRowCount(0);
+            note.setText("Select a P4 and parse inventory to calculate P" + tier + ".");
+            resizeTable(scroll, table, 0);
         }
     }
 
-    /** The usual nine P2 rows must be fully visible without scrolling. */
-    private static int viewportHeight(JTable table) {
-        int rows = Math.max(1, table.getModel().getRowCount());
-        int visible = Math.min(rows, 12);
-        return visible * (table.getRowHeight() + 1) + 26;
-    }
+    private final class RecipeView {
+        final JPanel card = UiComponents.card();
 
-    // ---- input events ----
+        RecipeView() {
+            card.setLayout(new BorderLayout(0, UiConstants.ROW_GAP));
+            card.add(UiComponents.sectionHeader("Recipe Summary",
+                    "P4 → P3 → P2 relationships for each executable balance block."),
+                    BorderLayout.NORTH);
+            recipeHierarchyPanel.setOpaque(false);
+            recipeHierarchyPanel.setLayout(new BoxLayout(recipeHierarchyPanel, BoxLayout.Y_AXIS));
+            card.add(recipeHierarchyPanel, BorderLayout.CENTER);
+            clear();
+            align(card);
+        }
 
-    private void onInventoryTextSubmitted(String text) {
-        inventoryPanel.setBusy(true);
-        new SwingWorker<PiCalculatorController.InventoryStatus, Void>() {
-            @Override
-            protected PiCalculatorController.InventoryStatus doInBackground() {
-                return controller.parseInventory(text);
-            }
+        void show(P4BalanceRecipe recipe) {
+            recipeHierarchyPanel.removeAll();
+            addCaption("SELECTED PRODUCT");
+            addRow(recipe.p4Product().name(), UiConstants.TITLE_FONT, null);
+            addGap(UiConstants.CARD_GAP);
+            addSeparator();
+            addGap(UiConstants.CARD_GAP);
+            addHierarchy("P3 Balance Block", recipe.p3Hierarchy(), false);
+            addGap(UiConstants.CARD_GAP);
+            addSeparator();
+            addGap(UiConstants.CARD_GAP);
+            addHierarchy("P2 Balance Block", recipe.p2Hierarchy(), true);
+            refresh();
+        }
 
-            @Override
-            protected void done() {
-                inventoryPanel.setBusy(false);
-                try {
-                    inventoryLoaded(get());
-                } catch (Exception e) {
-                    inventoryPanel.showError(messageOf(e));
+        void showError(String message) {
+            recipeHierarchyPanel.removeAll();
+            addRow(message, UiConstants.BODY_FONT, UiConstants.ERROR);
+            refresh();
+        }
+
+        void clear() {
+            recipeHierarchyPanel.removeAll();
+            addRow("Select a P4 product to inspect its SDE recipe hierarchy.",
+                    UiConstants.BODY_FONT, UiConstants.SECONDARY);
+            refresh();
+        }
+
+        private void addHierarchy(String title, P4BalanceRecipe.RecipeHierarchy hierarchy,
+                                  boolean includeP2) {
+            addRow(title, UiConstants.BODY_BOLD_FONT, null);
+            String cycles = hierarchy.p4RecipeCycles() + (hierarchy.p4RecipeCycles() == 1
+                    ? " P4 recipe cycle" : " P4 recipe cycles");
+            addRow("1 block = " + cycles + " = " + Formats.amount(hierarchy.p4Quantity())
+                            + " × " + hierarchy.p4Product().name(),
+                    UiConstants.METRIC_CAPTION_FONT, UiConstants.SECONDARY);
+            addGap(UiConstants.ROW_GAP);
+            addRow(hierarchy.p4Product().name() + " × "
+                    + Formats.amount(hierarchy.p4Quantity()), UiConstants.TITLE_FONT, null);
+            List<P4BalanceRecipe.P3Branch> branches = hierarchy.p3Branches();
+            for (int branchIndex = 0; branchIndex < branches.size(); branchIndex++) {
+                P4BalanceRecipe.P3Branch branch = branches.get(branchIndex);
+                boolean lastBranch = branchIndex == branches.size() - 1;
+                addRow((lastBranch ? "└─ " : "├─ ") + branch.commodity().name() + " × "
+                        + Formats.amount(branch.quantity()), UiConstants.BODY_BOLD_FONT, null);
+                if (includeP2) {
+                    for (int inputIndex = 0; inputIndex < branch.p2Inputs().size(); inputIndex++) {
+                        P4BalanceRecipe.Ingredient input = branch.p2Inputs().get(inputIndex);
+                        boolean lastInput = inputIndex == branch.p2Inputs().size() - 1;
+                        String prefix = (lastBranch ? "   " : "│  ")
+                                + (lastInput ? "└─ " : "├─ ");
+                        addRow(prefix + input.commodity().name() + " × "
+                                        + Formats.amount(input.quantity()),
+                                UiConstants.BODY_FONT, UiConstants.SECONDARY);
+                    }
+                    if (!lastBranch) addGap(3);
                 }
             }
+        }
+
+        private void addCaption(String text) {
+            addRow(text, UiConstants.METRIC_CAPTION_FONT, UiConstants.SECONDARY);
+        }
+
+        private void addRow(String text, Font font, Color color) {
+            JLabel row = new JLabel(text);
+            row.setFont(font);
+            if (color != null) row.setForeground(color);
+            align(row);
+            recipeHierarchyPanel.add(row);
+        }
+
+        private void addSeparator() {
+            JSeparator separator = new JSeparator();
+            align(separator);
+            separator.setMaximumSize(new Dimension(Integer.MAX_VALUE, 1));
+            recipeHierarchyPanel.add(separator);
+        }
+
+        private void addGap(int height) {
+            recipeHierarchyPanel.add(Box.createVerticalStrut(height));
+        }
+
+        private void refresh() {
+            recipeHierarchyPanel.revalidate();
+            recipeHierarchyPanel.repaint();
+        }
+    }
+
+    private static JScrollPane compactTableScroll(JTable table, int rows) {
+        JScrollPane scroll = new JScrollPane(table,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        resizeTable(scroll, table, rows);
+        return scroll;
+    }
+
+    private static void resizeTable(JScrollPane scroll, JTable table, int rows) {
+        int visible = Math.min(Math.max(1, rows), 12);
+        int height = table.getTableHeader().getPreferredSize().height + visible * table.getRowHeight() + 3;
+        scroll.setPreferredSize(new Dimension(0, height));
+        scroll.setMinimumSize(new Dimension(0, height));
+        scroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, height));
+        scroll.revalidate();
+    }
+
+    private void onInventoryTextSubmitted(String text) {
+        inventoryReady = false;
+        inventory = null;
+        clearResults();
+        updateCalculateEnabled();
+        inventoryPanel.setBusy(true);
+        new SwingWorker<PiCalculatorController.InventoryStatus, Void>() {
+            @Override protected PiCalculatorController.InventoryStatus doInBackground() {
+                return controller.parseInventory(text);
+            }
+            @Override protected void done() {
+                inventoryPanel.setBusy(false);
+                try { inventoryLoaded(get()); }
+                catch (Exception e) { inventoryFailed(messageOf(e)); }
+            }
         }.execute();
+    }
+
+    private void invalidateInventoryEdit() {
+        if (inventoryReady || lastPlan != null) {
+            inventoryReady = false;
+            inventory = null;
+            clearResults();
+            updateCalculateEnabled();
+        }
     }
 
     private void onInventoryReset() {
         inventoryReady = false;
         inventory = null;
+        clearResults();
         updateCalculateEnabled();
     }
-
-    private void onTemplateTextSubmitted(String text) {
-        templatePanel.setBusy(true, "loading");
-        new SwingWorker<PiCalculatorController.PlanetTemplate, Void>() {
-            @Override
-            protected PiCalculatorController.PlanetTemplate doInBackground() {
-                return controller.loadTemplate(text);
-            }
-
-            @Override
-            protected void done() {
-                templatePanel.setBusy(false, null);
-                try {
-                    templateLoaded(get());
-                } catch (Exception e) {
-                    templatePanel.showError(messageOf(e));
-                }
-            }
-        }.execute();
-    }
-
-    private void onTemplateFileChosen(Path file) {
-        try {
-            String text = java.nio.file.Files.readString(file);
-            SwingUtilities.invokeLater(() -> {
-                templatePanel.setTemplateText(text);
-                onTemplateTextSubmitted(text);
-            });
-        } catch (Exception e) {
-            templatePanel.showError("Unable to read file:\n" + e.getMessage());
-        }
-    }
-
-    private void onTemplateReset() {
-        template = null;
-        updateCalculateEnabled();
-    }
-
-    // ---- render (EDT, also driven directly by tests) ----
 
     void inventoryLoaded(PiCalculatorController.InventoryStatus status) {
-        this.inventoryReady = !status.snapshot().isEmpty();
-        this.inventory = status.snapshot();
+        inventory = status.snapshot();
+        inventoryReady = !inventory.isEmpty();
         inventoryPanel.showLoaded(status);
         updateCalculateEnabled();
     }
 
-    void templateLoaded(PiCalculatorController.PlanetTemplate loaded) {
-        this.template = loaded;
-        templatePanel.showSummary(loaded.summary());
+    void inventoryFailed(String message) {
+        inventoryReady = false;
+        inventory = null;
+        clearResults();
+        inventoryPanel.showError(message);
         updateCalculateEnabled();
     }
 
@@ -408,150 +496,106 @@ public final class BalanceInventoryPanel extends JPanel {
         InventoryBalancePlan plan = run.plan();
         lastPlan = plan;
         errorLabel.setText(" ");
-
-        // metric strip — the four numbers the user came for
-        metricBlocksValue.setText(Formats.amount(plan.targetBlocks()));
-        metricTimeValue.setText(Formats.runtime(plan.productionTimeSeconds()));
-        metricOutputValue.setText(firstOutputText(plan));
-        metricAdditionalValue.setText(Formats.volume(plan.totalAdditionalVolume()));
-
-        // balance table (display-only em dash for zero adds; raw values intact)
-        balanceAdds.clear();
-        balanceModel.setRowCount(0);
-        for (InventoryBalanceMaterial m : plan.materials()) {
-            balanceAdds.add(m.addQuantity());
-            balanceModel.addRow(new Object[]{
-                    m.commodity().name(),
-                    Formats.amount(m.requiredPerBlock()),
-                    Formats.amount(m.currentQuantity()),
-                    Formats.amount(m.targetQuantity()),
-                    Formats.addCell(m.addQuantity())});
+        p2PurchaseValue.setText(Formats.volume(plan.p2Balance().totalAdditionalVolume()));
+        p3PurchaseValue.setText(Formats.volume(plan.p3Balance().totalAdditionalVolume()));
+        totalPurchaseValue.setText(Formats.volume(plan.totalPurchaseVolume()));
+        p2View.show(plan.p2Balance());
+        p3View.show(plan.p3Balance());
+        unusedModel.setRowCount(0);
+        for (InventoryBalancePlan.UnusedItem item : plan.unusedInventory()) {
+            unusedModel.addRow(new Object[]{item.commodity().name(), Formats.amount(item.quantity()),
+                    "P" + item.tier()});
         }
-        // size the viewport to the actual row count (9 P2 fit without scrolling)
-        balanceTable.setPreferredScrollableViewportSize(
-                new Dimension(0, viewportHeight(balanceTable)));
-
-        // unused inventory (collapsed section)
-        if (plan.unusedInventory().isEmpty()) {
-            unusedCaption.setText("All inventory participates in this balance.");
-            unusedModel.setRowCount(0);
-        } else {
-            unusedCaption.setText(plan.unusedInventory().size()
-                    + " item(s) not consumed by this template:");
-            unusedModel.setRowCount(0);
-            for (InventoryBalancePlan.UnusedItem u : plan.unusedInventory()) {
-                unusedModel.addRow(new Object[]{
-                        u.commodity().name(), Formats.amount(u.quantity()), "P" + u.tier()});
-            }
-        }
-
-        // expected outputs (collapsed details) + per-line summary text
-        outputModel.setRowCount(0);
-        for (InventoryBalancePlan.ExpectedOutput o : plan.expectedFinalOutputs()) {
-            outputModel.addRow(new Object[]{
-                    o.commodity().name(), Formats.amount(o.quantity())});
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("Target production blocks: ").append(Formats.amount(plan.targetBlocks())).append('\n');
-        sb.append("Production time: ").append(Formats.runtimeExact(plan.productionTimeSeconds())).append('\n');
-        sb.append("Additional P2 volume required: ").append(Formats.volume(plan.totalAdditionalVolume())).append('\n');
-        summary.setForeground(null);
-        summary.setText(sb.toString());
+        unusedCaption.setText(plan.unusedInventory().isEmpty()
+                ? "All parsed inventory is related to this P4."
+                : plan.unusedInventory().size() + " unrelated item(s) were ignored.");
+        summary.setText("P2 target blocks: " + Formats.amount(plan.p2Balance().targetBlocks())
+                + "\nP2 equivalent P4 output: " + Formats.amount(plan.p2Balance().equivalentP4Units())
+                + "\nP3 target blocks: " + Formats.amount(plan.p3Balance().targetBlocks())
+                + "\nP3 equivalent P4 output: " + Formats.amount(plan.p3Balance().equivalentP4Units())
+                + "\nP2 additional volume: " + Formats.volume(plan.p2Balance().totalAdditionalVolume())
+                + "\nP3 additional volume: " + Formats.volume(plan.p3Balance().totalAdditionalVolume()));
+        copyShoppingButton.setEnabled(true);
+        copyTargetButton.setEnabled(true);
     }
 
-    private static String firstOutputText(InventoryBalancePlan plan) {
-        if (plan.expectedFinalOutputs().isEmpty()) {
-            return "\u2014";
-        }
-        var first = plan.expectedFinalOutputs().get(0);
-        String text = Formats.amount(first.quantity()) + " " + first.commodity().name();
-        if (plan.expectedFinalOutputs().size() > 1) {
-            text += " +" + (plan.expectedFinalOutputs().size() - 1) + " more";
-        }
-        return text;
+    void clearResults() {
+        lastPlan = null;
+        errorLabel.setText(" ");
+        p2PurchaseValue.setText("—");
+        p3PurchaseValue.setText("—");
+        totalPurchaseValue.setText("—");
+        if (p2View != null) p2View.clear(2);
+        if (p3View != null) p3View.clear(3);
+        p2Model.setRowCount(0);
+        p3Model.setRowCount(0);
+        unusedModel.setRowCount(0);
+        unusedCaption.setText(" ");
+        summary.setText(" ");
+        copyShoppingButton.setEnabled(false);
+        copyTargetButton.setEnabled(false);
     }
-
-    private InventoryBalancePlan lastPlan;   // for copy buttons
 
     void showError(String message) {
-        errorLabel.setText(message);
-        metricBlocksValue.setText("\u2014");
-        metricTimeValue.setText("\u2014");
-        metricOutputValue.setText("\u2014");
-        metricAdditionalValue.setText("\u2014");
-        balanceAdds.clear();
-        balanceModel.setRowCount(0);
-        unusedModel.setRowCount(0);
-        outputModel.setRowCount(0);
-        summary.setForeground(UiConstants.ERROR);
-        summary.setText(message);
+        clearResults();
+        errorLabel.setText("<html>" + escape(message) + "</html>");
     }
-
-    // ---- helpers ----
 
     private void onCalculate() {
         InventorySnapshot snapshot = inventory;
-        PiCalculatorController.PlanetTemplate tpl = template;
-        if (snapshot == null || tpl == null) {
-            return;
-        }
-        calculateButton.setText("Calculating...");
+        P4BalanceRecipe recipe = selectedRecipe;
+        if (snapshot == null || recipe == null) return;
+        clearResults();
+        calculateButton.setText("Calculating…");
+        calculateButton.setEnabled(false);
         new SwingWorker<BalanceRun, Void>() {
-            @Override
-            protected BalanceRun doInBackground() {
-                return new BalanceRun(controller.balance(snapshot, tpl.plan()));
+            @Override protected BalanceRun doInBackground() {
+                return new BalanceRun(controller.balance(snapshot, recipe));
             }
-
-            @Override
-            protected void done() {
+            @Override protected void done() {
                 calculateButton.setText("Calculate Balance");
-                try {
-                    showPlan(get());
-                } catch (Exception e) {
-                    showError(balanceErrorMessage(rootCause(e)));
-                }
+                try { showPlan(get()); }
+                catch (Exception e) { showError(messageOf(e)); }
                 updateCalculateEnabled();
             }
         }.execute();
     }
 
-    /** Maps low-level exceptions to honest user-facing messages (never invented data). */
-    private static String balanceErrorMessage(Throwable t) {
-        if (t instanceof BalanceException.NoP2Requirements) {
-            return "This template does not contain a P2 \u2192 P4 production chain.\n"
-                    + "Its sustainable plan has no tier-2 external inputs, so there is "
-                    + "nothing to balance against P2 stock.";
-        }
-        if (t instanceof TemplateException.UnsupportedTemplate) {
-            return "This JSON does not appear to be a supported PI template.";
-        }
-        String msg = t.getMessage();
-        return msg == null ? t.getClass().getSimpleName() : msg;
-    }
-
-    private static String messageOf(Exception e) {
-        Throwable t = rootCause(e);
-        String msg = t.getMessage();
-        return msg == null ? t.getClass().getSimpleName() : msg;
-    }
-
-    private static Throwable rootCause(Exception e) {
-        Throwable t = e;
-        while (t.getCause() != null && t.getCause() != t) {
-            t = t.getCause();
-        }
-        return t;
+    private void updateProductStatus() {
+        var product = (BalanceInventoryController.P4Product) p4Combo.getSelectedItem();
+        productStatus.setText(product == null ? "Select a P4 product from the SDE."
+                : "Selected SDE typeID: " + product.typeId());
+        productStatus.setForeground(UiConstants.SECONDARY);
     }
 
     private void updateCalculateEnabled() {
-        calculateButton.setEnabled(inventoryReady && template != null);
+        calculateButton.setEnabled(inventoryReady && selectedRecipe != null);
     }
 
-    private void copyToClipboard(String text, String what) {
-        if (text == null || text.isBlank()) {
-            return;
-        }
-        Toolkit.getDefaultToolkit().getSystemClipboard()
+    private void copyPlan(boolean shopping) {
+        if (lastPlan == null) return;
+        String text = shopping ? CopyShoppingListFormatter.shoppingList(lastPlan)
+                : CopyShoppingListFormatter.targetInventory(lastPlan);
+        if (!text.isBlank()) Toolkit.getDefaultToolkit().getSystemClipboard()
                 .setContents(new StringSelection(text), null);
+    }
+
+    private static String messageOf(Throwable error) {
+        Throwable t = error;
+        while (t.getCause() != null && t.getCause() != t) t = t.getCause();
+        return t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+    }
+
+    private static String escape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace("\n", "<br>");
+    }
+
+    private static final class VerticalScrollablePanel extends JPanel implements Scrollable {
+        @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+        @Override public int getScrollableUnitIncrement(Rectangle r, int o, int d) { return 18; }
+        @Override public int getScrollableBlockIncrement(Rectangle r, int o, int d) { return Math.max(18, r.height - 36); }
+        @Override public boolean getScrollableTracksViewportWidth() { return true; }
+        @Override public boolean getScrollableTracksViewportHeight() { return false; }
     }
 }

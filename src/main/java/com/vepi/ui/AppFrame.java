@@ -18,8 +18,8 @@ import java.awt.event.WindowEvent;
  * <ol>
  *   <li><b>Load Allocation</b> — the existing inventory → multi-planet P2
  *       load feature, unchanged, first tab (it is the primary function).</li>
- *   <li><b>Balance Inventory</b> — the second feature: one inventory + one
- *       template → which P2 to top up to whole sustainable blocks.</li>
+ *   <li><b>Balance Inventory</b> — inventory + an SDE-discovered P4 product →
+ *       independent P2 and P3 stock balances.</li>
  * </ol>
  *
  * <p>The two tabs share nothing except the SDE-backed {@link PiCalculatorController}
@@ -39,14 +39,16 @@ public final class AppFrame extends JFrame {
         });
 
         JTabbedPane tabs = new JTabbedPane(JTabbedPane.TOP);
+        tabs.setFont(UiConstants.BODY_BOLD_FONT);
+        tabs.setBackground(UiConstants.PAGE_BACKGROUND);
         tabs.addTab("Load Allocation", new AllocationFrame(controller));
         tabs.addTab("Balance Inventory",
                 new BalanceInventoryPanel(new BalanceInventoryController(controller)));
         setContentPane(tabs);
 
-        setPreferredSize(new Dimension(1250, 850));
+        setPreferredSize(new Dimension(1280, 800));
         pack();
-        setMinimumSize(new Dimension(1100, 760));
+        setMinimumSize(new Dimension(980, 640));
         setLocationRelativeTo(null);
     }
 

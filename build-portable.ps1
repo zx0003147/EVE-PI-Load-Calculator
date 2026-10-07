@@ -1,6 +1,6 @@
-# EVE PI Load Calculator - portable Windows release build.
+# EVE PI Calculator - portable Windows release build.
 #
-# Produces dist\EVE-PI-Load-Calculator-v<version>-win-x64.zip containing a
+# Produces dist\EVE-PI-Calculator-v<version>-Windows-x64.zip containing a
 # self-contained jpackage app-image (bundled Java runtime, no installer).
 #
 # Steps: safe clean -> full test suite -> production jar -> staging ->
@@ -20,13 +20,12 @@ Set-StrictMode -Version Latest
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
-$AppName     = "EVE PI Load Calculator"
+$AppName     = "EVE PI Calculator"
 $MainClass   = "com.vepi.app.DesktopMain"
 $VersionFile = Join-Path $ProjectRoot "VERSION"
 $DistDir     = Join-Path $ProjectRoot "dist"
 $AppImageDir = Join-Path $DistDir  "app-image"
 $PackageInput = Join-Path $ProjectRoot "out\package-input"
-$ExtractTestDir = Join-Path $ProjectRoot "out\portable-extract-test"
 $WindowProbe = Join-Path $ProjectRoot "tools\window_probe.py"
 
 function Fail([string]$Step, [string]$Message) {
@@ -40,7 +39,9 @@ function Fail([string]$Step, [string]$Message) {
 if (-not (Test-Path $VersionFile)) { Fail "version" "VERSION file missing" }
 $Version = (Get-Content $VersionFile -Raw).Trim()
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { Fail "version" "invalid version '$Version'" }
-Write-Host "== EVE PI Load Calculator portable release v$Version =="
+$ExtractTestDir = Join-Path ([System.IO.Path]::GetTempPath()) `
+    ("EVE-PI-Release-Test-v{0}-{1}" -f $Version, [guid]::NewGuid().ToString("N"))
+Write-Host "== EVE PI Calculator portable release v$Version =="
 
 # Stop leftover instances of our own app so later file copies never hit a
 # lock (exact image name only; unrelated processes are never touched).
@@ -48,7 +49,7 @@ Get-Process -Name $AppName -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 
 # --- 2. safe clean of OUR OWN release dirs only ------------------------------
-foreach ($dir in @($DistDir, $PackageInput, $ExtractTestDir)) {
+foreach ($dir in @($DistDir, $PackageInput)) {
     $full = [System.IO.Path]::GetFullPath($dir)
     if (-not $full.StartsWith($ProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
         Fail "clean" "refusing to clean outside project root: $full"
@@ -130,10 +131,36 @@ Write-Host ">> [3/9] Running jpackage --type app-image..."
     --dest $AppImageDir
 if ($LASTEXITCODE -ne 0) { Fail "jpackage" "exit code $LASTEXITCODE" }
 
-# --- 6. README -----------------------------------------------------------------
+# --- 6. README + launcher format verification ----------------------------------
 $appRoot = Join-Path $AppImageDir $AppName
 $exe = Join-Path $appRoot "$AppName.exe"
-Copy-Item (Join-Path $ProjectRoot "packaging\README.txt") (Join-Path $appRoot "README.txt") -Force
+$readmeTemplate = Get-Content (Join-Path $ProjectRoot "packaging\README.txt") -Raw
+$readmeTemplate.Replace("@VERSION@", $Version) |
+    Set-Content (Join-Path $appRoot "README.txt") -Encoding utf8
+
+function Get-PeLauncherInfo([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $reader = New-Object System.IO.BinaryReader($stream)
+    try {
+        $stream.Position = 0x3c
+        $peOffset = $reader.ReadInt32()
+        $stream.Position = $peOffset
+        if ($reader.ReadUInt32() -ne 0x00004550) { Fail "launcher" "invalid PE signature" }
+        $machine = $reader.ReadUInt16()
+        $stream.Position = $peOffset + 24 + 68
+        $subsystem = $reader.ReadUInt16()
+        return [pscustomobject]@{ Machine = $machine; Subsystem = $subsystem }
+    } finally {
+        $reader.Dispose()
+        $stream.Dispose()
+    }
+}
+
+if (-not (Test-Path $exe)) { Fail "launcher" "launcher exe missing: $exe" }
+$peInfo = Get-PeLauncherInfo $exe
+if ($peInfo.Machine -ne 0x8664) { Fail "launcher" ("expected x64 PE machine 0x8664, got 0x{0:x4}" -f $peInfo.Machine) }
+if ($peInfo.Subsystem -ne 2) { Fail "launcher" ("expected Windows GUI subsystem 2, got {0}" -f $peInfo.Subsystem) }
+Write-Host "   launcher PE: x64, Windows GUI subsystem (no console)"
 
 # --- 7. smoke test the app-image ----------------------------------------------
 Write-Host ">> [4/9] Smoke testing app-image..."
@@ -167,14 +194,14 @@ Write-Host ">> [5/9] Creating ZIP..."
 $ProgressPreference = "SilentlyContinue"   # quiet + much faster for big archives
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 Add-Type -AssemblyName System.IO.Compression   # ZipArchiveMode lives here on .NET Framework
-$zipTop = Join-Path $DistDir ("EVE-PI-Load-Calculator-v{0}" -f $Version)
+$zipTop = Join-Path $DistDir ("EVE-PI-Calculator-v{0}" -f $Version)
 Copy-Item $appRoot $zipTop -Recurse
-$ZipPath = Join-Path $DistDir ("EVE-PI-Load-Calculator-v{0}-win-x64.zip" -f $Version)
+$ZipPath = Join-Path $DistDir ("EVE-PI-Calculator-v{0}-Windows-x64.zip" -f $Version)
 if (Test-Path $ZipPath) { Remove-Item -Force -Confirm:$false $ZipPath }
 # Build the archive entry-by-entry with forward slashes: ZipFile::CreateFromDirectory
 # on .NET Framework writes '\' separators, which non-Windows unzip tools treat
 # as part of the file name.
-$topName = "EVE-PI-Load-Calculator-v{0}" -f $Version
+$topName = "EVE-PI-Calculator-v{0}" -f $Version
 $zip = [System.IO.Compression.ZipFile]::Open($ZipPath, [System.IO.Compression.ZipArchiveMode]::Create)
 try {
     Get-ChildItem $zipTop -Recurse -File | ForEach-Object {
@@ -193,7 +220,8 @@ if (-not (Test-Path $ZipPath)) { Fail "zip" "zip was not created" }
 # --- 9. extract-and-launch verification ------------------------------------------
 Write-Host ">> [6/9] Extracting ZIP into clean dir and re-launching..."
 Expand-Archive -Path $ZipPath -DestinationPath $ExtractTestDir -Force
-$extractedExe = Join-Path $ExtractTestDir ("EVE-PI-Load-Calculator-v{0}\{1}.exe" -f $Version, $AppName)
+$extractedRoot = Join-Path $ExtractTestDir ("EVE-PI-Calculator-v{0}" -f $Version)
+$extractedExe = Join-Path $extractedRoot "$AppName.exe"
 if (-not (Test-Path $extractedExe)) { Fail "extract-test" "extracted launcher missing: $extractedExe" }
 $proc2 = Start-Process -FilePath $extractedExe -WorkingDirectory $env:USERPROFILE -PassThru
 Start-Sleep -Seconds 12
@@ -212,9 +240,21 @@ Write-Host "   extracted-copy smoke PASS"
 
 # --- 10. SHA-256 + summary --------------------------------------------------------
 Write-Host ">> [7/9] Computing SHA-256..."
-$hash = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLower()
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$zipStream = [System.IO.File]::OpenRead($ZipPath)
+try {
+    $hash = -join ($sha256.ComputeHash($zipStream) |
+        ForEach-Object { $_.ToString("x2") })
+} finally {
+    $zipStream.Dispose()
+    $sha256.Dispose()
+}
+if ($hash -notmatch '^[0-9a-f]{64}$') { Fail "checksum" "SHA-256 calculation failed" }
+$ChecksumPath = "$ZipPath.sha256"
+("{0}  {1}" -f $hash, (Split-Path $ZipPath -Leaf)) |
+    Set-Content $ChecksumPath -Encoding ascii
 $zipSizeMB = [math]::Round((Get-Item $ZipPath).Length / 1MB, 1)
-$imageSizeMB = [math]::Round(((Get-ChildItem $appRoot -Recurse | Measure-Object Length -Sum).Sum) / 1MB, 1)
+$imageSizeMB = [math]::Round(((Get-ChildItem $extractedRoot -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB, 1)
 
 Write-Host ">> [8/9] Verifying ZIP contents are clean..."
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -242,7 +282,9 @@ Write-Host ">> [9/9] RELEASE SUMMARY" -ForegroundColor Green
 Write-Host "    version       : $Version"
 Write-Host "    tests         : found=$found passed=$passed failed=$failed"
 Write-Host "    app-image dir : $appRoot ($imageSizeMB MB)"
+Write-Host "    extract test  : $ExtractTestDir"
 Write-Host "    zip           : $ZipPath"
+Write-Host "    checksum file : $ChecksumPath"
 Write-Host "    zip size      : $zipSizeMB MB"
 Write-Host "    sha256        : $hash"
 Write-Host ""

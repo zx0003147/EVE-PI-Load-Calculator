@@ -2,22 +2,26 @@ package com.vepi.app;
 
 import com.vepi.balancing.InventoryBalanceCalculator;
 import com.vepi.balancing.InventoryBalancePlan;
-import com.vepi.flow.SustainableProductionPlan;
+import com.vepi.balancing.P4BalanceRecipe;
 import com.vepi.inventory.InventorySnapshot;
+
+import java.util.List;
 
 /**
  * Seam of the <b>Balance Inventory</b> feature — deliberately independent of
  * the Load Allocation workflow (no planet capacity, no multi-planet split,
  * no shared inventory state).
  *
- * <p>Thin composition: inventory parsing and template loading reuse the same
- * {@link PiCalculatorController} SDE pipeline as Load Allocation, while the
- * balance arithmetic itself lives in the standalone
- * {@link InventoryBalanceCalculator} (pure domain logic, tested without the
- * SDE). This class exists so the UI and its tests have ONE entry point for
- * "inventory text + template text → InventoryBalancePlan".
+ * <p>Thin composition: inventory parsing, P4 discovery and recipe lookup reuse
+ * the shared SDE, while the balance arithmetic lives in the standalone
+ * {@link InventoryBalanceCalculator}. No template state enters this workflow.
  */
 public final class BalanceInventoryController {
+
+    /** Combo-box value: display name is presentation; typeID is the identity. */
+    public record P4Product(long typeId, String name) {
+        @Override public String toString() { return name; }
+    }
 
     private final PiCalculatorController core;
     private final InventoryBalanceCalculator calculator = new InventoryBalanceCalculator();
@@ -31,37 +35,23 @@ public final class BalanceInventoryController {
         return core.parseInventory(inventoryText);
     }
 
-    /** Loads a pasted template JSON into summary + sustainable plan (P2-only model). */
-    public PiCalculatorController.PlanetTemplate loadTemplate(String templateText) {
-        return core.loadPlanetTemplate(templateText);
+    public List<P4Product> p4Products() {
+        return core.p4Products().stream()
+                .map(c -> new P4Product(c.typeId(), c.name()))
+                .toList();
     }
 
-    /**
-     * The full balance computation.
-     *
-     * @throws com.vepi.balancing.BalanceException.NoP2Requirements
-     *         when the template is not a P2 → P4 chain (e.g. pure P3 → P4)
-     */
-    public InventoryBalancePlan balance(InventorySnapshot snapshot,
-                                        SustainableProductionPlan plan) {
-        return calculator.calculate(plan, snapshot, core::tierOf, core::commodityOf);
+    public InventoryBalancePlan balance(InventorySnapshot snapshot, long p4TypeId) {
+        return balance(snapshot, recipe(p4TypeId));
     }
 
-    /** Convenience overload straight from raw paste text (controller tests). */
-    public InventoryBalancePlan balance(String inventoryText, String templateText) {
-        var status = parseInventory(inventoryText);
-        var template = loadTemplate(templateText);
-        return balance(status.snapshot(), template.plan());
+    public P4BalanceRecipe recipe(long p4TypeId) {
+        return core.p4BalanceRecipe(p4TypeId);
     }
 
-    /**
-     * Whether this template's external requirements contain any tier-2 input
-     * — false means Balance cannot run for it and the UI should show the
-     * "not a P2 → P4 chain" error instead of enabling Calculate.
-     */
-    public boolean hasP2Chain(SustainableProductionPlan plan) {
-        return plan.externalRequirementsPerBlock().entrySet().stream()
-                .anyMatch(e -> e.getValue() != null && e.getValue() > 0
-                        && core.tierOf(e.getKey()) == 2);
+    public InventoryBalancePlan balance(InventorySnapshot snapshot, P4BalanceRecipe recipe) {
+        return calculator.calculate(recipe, snapshot,
+                core::tierOf, core::commodityOf);
     }
+
 }

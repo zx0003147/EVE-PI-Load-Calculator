@@ -6,12 +6,12 @@ import java.math.BigDecimal;
 import java.util.Objects;
 
 /**
- * One balanced P2 material of an {@link InventoryBalancePlan}.
+ * One balanced P2 or P3 material of an {@link InventoryBalancePlan}.
  *
  * <p>All quantities are exact longs; volumes are exact BigDecimal products of
  * the commodity's SDE unit volume — no floating point anywhere.
  *
- * @param commodity        the P2 item (SDE name + unit volume)
+ * @param commodity        the P2/P3 item (SDE name + unit volume)
  * @param requiredPerBlock units consumed per sustainable production block
  * @param currentQuantity  what the user currently has (0 when absent)
  * @param targetQuantity   {@code targetBlocks × requiredPerBlock} — the level

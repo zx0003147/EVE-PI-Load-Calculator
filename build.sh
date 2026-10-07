@@ -38,6 +38,7 @@ java -cp "lib/*" org.junit.platform.console.ConsoleLauncher \
   --select-class "com.vepi.flow.ProductionFlowSolverTest" \
   --select-class "com.vepi.allocation.MultiPlanetAllocationPlannerTest" \
   --select-class "com.vepi.balancing.InventoryBalanceCalculatorTest" \
+  --select-class "com.vepi.balancing.P4BalanceRecipeResolverTest" \
   --select-class "com.vepi.app.PiCalculatorControllerTest" \
   --select-class "com.vepi.app.PiCalculatorControllerAllocationTest" \
   --select-class "com.vepi.app.BalanceInventoryControllerTest" \
@@ -47,6 +48,9 @@ java -cp "lib/*" org.junit.platform.console.ConsoleLauncher \
   --select-class "com.vepi.ui.CopyTextTest" \
   --select-class "com.vepi.ui.CopyShoppingListFormatterTest" \
   --select-class "com.vepi.ui.AllocationReadinessTest" \
+  --select-class "com.vepi.ui.BalanceInventoryPanelStateTest" \
+  --select-class "com.vepi.ui.MouseWheelForwarderTest" \
+  --select-class "com.vepi.ui.UiComponentsTest" \
   --select-class "com.vepi.ui.GuiSmokeTest" \
   --select-class "com.vepi.ui.AllocationFrameSmokeTest" \
   --select-class "com.vepi.ui.AppFrameSmokeTest" \

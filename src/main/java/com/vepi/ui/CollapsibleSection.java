@@ -36,9 +36,11 @@ final class CollapsibleSection extends JPanel {
         setLayout(new BorderLayout(0, UiConstants.ROW_GAP));
 
         toggle = new JButton(title);
+        UiComponents.secondaryButton(toggle);
         toggle.setFont(UiConstants.BODY_FONT);
         toggle.setBorder(BorderFactory.createEmptyBorder(2, 0, 2, 0));
         toggle.setContentAreaFilled(false);
+        toggle.setForeground(UiConstants.PRIMARY_DARK);
         toggle.setCursor(new java.awt.Cursor(java.awt.Cursor.HAND_CURSOR));
         toggle.setHorizontalAlignment(javax.swing.SwingConstants.LEFT);
         toggle.addActionListener(e -> setExpanded(!expanded));

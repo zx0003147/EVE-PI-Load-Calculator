@@ -12,7 +12,7 @@ import java.util.TreeMap;
 import java.util.function.LongToIntFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -169,7 +169,7 @@ class InventoryBalanceCalculatorTest {
                 "unused P2 is still reported as P2");
     }
 
-    // ---- F: P3 stock is parsed/displayed but never changes the balance ----
+    // ---- F: irrelevant P3 stock is unused and never changes the P2 balance ----
 
     @Test
     void scenarioF_p3StockIgnored_sameResultWithAndWithout() {
@@ -192,21 +192,60 @@ class InventoryBalanceCalculatorTest {
         assertTrue(a.unusedInventory().isEmpty());
     }
 
-    // ---- G: pure P3→P4 template is rejected, not invented into a chain ----
+    // ---- G: pure P3→P4 template balances its actual external inputs ----
 
     @Test
-    void scenarioG_noP2Requirements_throwsExplicitError() {
-        // external requirements contain only P3 (the pure-P4 IRD template shape)
+    void scenarioG_p3Only_balancesP3WithoutInventingP2() {
         SustainableProductionPlan plan = SustainableProductionPlan.simple(3600,
                 new TreeMap<>(Map.of(2348L, 48L, 2366L, 48L, 9846L, 48L)),
                 new TreeMap<>(Map.of(2868L, 8L)));
-        InventorySnapshot stock = new InventorySnapshot(Map.of(2348L, 100L));
+        InventorySnapshot stock = new InventorySnapshot(Map.of(2348L, 100L, 2366L, 49L));
 
-        BalanceException.NoP2Requirements e = assertThrows(BalanceException.NoP2Requirements.class,
-                () -> calculator.calculate(plan, stock,
-                        tiers(Map.of(2348L, 3, 2366L, 3, 9846L, 3)), this::commodity));
-        assertEquals("This template does not contain a P2 → P4 production chain.",
-                e.getMessage());
+        InventoryBalancePlan result = calculator.calculate(plan, stock,
+                tiers(Map.of(2348L, 3, 2366L, 3, 9846L, 3)), this::commodity);
+
+        assertTrue(result.p2Balance().materials().isEmpty());
+        assertEquals(3, result.p3Balance().targetBlocks(), "ceil(100/48)");
+        assertEquals(3, result.p3Balance().materials().size());
+        assertEquals(144, result.p3Balance().materials().get(0).targetQuantity());
+        assertEquals(24, result.expectedFinalOutputs().get(0).quantity());
+    }
+
+    @Test
+    void p2AndP3_targetBlocksAreIndependent() {
+        SustainableProductionPlan plan = SustainableProductionPlan.simple(3600,
+                new TreeMap<>(Map.of(101L, 10L, 201L, 4L)), new TreeMap<>());
+        InventoryBalancePlan result = calculator.calculate(plan,
+                new InventorySnapshot(Map.of(101L, 25L, 201L, 400L)),
+                tiers(Map.of(101L, 2, 201L, 3)), this::commodity);
+
+        assertEquals(3, result.p2Balance().targetBlocks());
+        assertEquals(100, result.p3Balance().targetBlocks());
+        assertEquals(30, result.p2Balance().materials().get(0).targetQuantity());
+        assertEquals(400, result.p3Balance().materials().get(0).targetQuantity());
+    }
+
+    @Test
+    void noP3Requirements_returnsEmptyP3Section() {
+        InventoryBalancePlan result = calculator.calculate(
+                p2Plan(Map.of(101L, 10L), Map.of()),
+                new InventorySnapshot(Map.of(101L, 25L)),
+                tiers(Map.of(101L, 2)), this::commodity);
+
+        assertFalse(result.p3Balance().hasRequirements());
+        assertEquals(0, result.p3Balance().targetBlocks());
+        assertEquals(0, BigDecimal.ZERO.compareTo(result.p3Balance().totalAdditionalVolume()));
+    }
+
+    @Test
+    void requiredP3WithNoP3Stock_targetsZeroAndBuysNothing() {
+        SustainableProductionPlan plan = SustainableProductionPlan.simple(3600,
+                new TreeMap<>(Map.of(201L, 4L)), new TreeMap<>());
+        InventoryBalancePlan result = calculator.calculate(plan,
+                new InventorySnapshot(Map.of()), tiers(Map.of(201L, 3)), this::commodity);
+
+        assertEquals(0, result.p3Balance().targetBlocks());
+        assertEquals(0, result.p3Balance().materials().get(0).addQuantity());
     }
 
     // ---- H: exact arithmetic on big numbers (no overflow, exact volumes) ----

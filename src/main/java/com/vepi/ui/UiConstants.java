@@ -23,8 +23,10 @@ public final class UiConstants {
     public static final int ROW_GAP = 6;          // between rows inside a card
 
     // ---- fonts (plain UI text is sans-serif; only raw data areas are mono) ----
+    public static final Font PAGE_TITLE_FONT =
+            new Font(Font.SANS_SERIF, Font.BOLD, 22);
     public static final Font TITLE_FONT =
-            new Font(Font.SANS_SERIF, Font.BOLD, 15);
+            new Font(Font.SANS_SERIF, Font.BOLD, 16);
     public static final Font SECTION_FONT =
             new Font(Font.SANS_SERIF, Font.BOLD, 12);
     public static final Font BODY_FONT =
@@ -46,4 +48,16 @@ public final class UiConstants {
     public static final Color WARNING = new Color(0x8A6D00);   // amber/brown
     public static final Color ERROR = new Color(0xB3261E);     // red
     public static final Color SECONDARY = new Color(0x666666); // gray text
+    public static final Color PAGE_BACKGROUND = new Color(0xF4F6F8);
+    public static final Color CARD_BACKGROUND = Color.WHITE;
+    public static final Color BORDER = new Color(0xD9DEE5);
+    public static final Color PRIMARY = new Color(0x2457A7);
+    public static final Color PRIMARY_DARK = new Color(0x193E78);
+    public static final Color PRIMARY_PRESSED = new Color(0x102B57);
+    public static final Color PRIMARY_DISABLED = new Color(0x8FA7C8);
+    public static final Color BUTTON_TEXT_DISABLED = new Color(0xE9EEF5);
+    public static final Color SECONDARY_BUTTON = new Color(0xF5F7FA);
+    public static final Color SECONDARY_BUTTON_HOVER = new Color(0xE7ECF3);
+    public static final Color SECONDARY_BUTTON_PRESSED = new Color(0xD5DDE8);
+    public static final Color TABLE_HEADER = new Color(0xE9EEF5);
 }

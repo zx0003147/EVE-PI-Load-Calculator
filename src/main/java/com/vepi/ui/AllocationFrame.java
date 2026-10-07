@@ -44,6 +44,7 @@ public final class AllocationFrame extends JPanel {
     final InventoryPanel inventoryPanel;          // package-visible for the GUI smoke test
     final AllocationResultPanel resultPanel;      // package-visible for the GUI smoke test
     final JButton calculateButton;                // package-visible for the GUI smoke test
+    final javax.swing.JLabel calculateStateLabel = new javax.swing.JLabel(" ");
     final List<PlanetPanel> planetPanels = new ArrayList<>();   // insertion order = planner order
 
     private final JPanel planetsContainer;
@@ -58,6 +59,10 @@ public final class AllocationFrame extends JPanel {
     public AllocationFrame(PiCalculatorController controller) {
         this.controller = controller;
         setLayout(new BorderLayout(0, 0));
+        setBackground(UiConstants.PAGE_BACKGROUND);
+        add(UiComponents.pageHeader("Load Allocation",
+                "Distribute shared inventory across planet templates while preserving fair runtime."),
+                BorderLayout.NORTH);
 
         // ---- LEFT COLUMN: inputs (inventory → planets → Calculate) ----
         // ---- CURRENT INVENTORY ----
@@ -71,6 +76,11 @@ public final class AllocationFrame extends JPanel {
             public void inventoryReset() {
                 onInventoryReset();
             }
+
+            @Override
+            public void inventoryTextChanged() {
+                if (inventoryReady) onInventoryReset();
+            }
         });
 
         // ---- PLANETS (dynamic cards, own scroll) ----
@@ -80,52 +90,82 @@ public final class AllocationFrame extends JPanel {
 
         JPanel addBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, UiConstants.ROW_GAP));
         JButton addPlanet = new JButton("+ Add Planet");
+        UiComponents.secondaryButton(addPlanet);
         addPlanet.addActionListener(e -> addPlanet());
         addBar.add(addPlanet);
 
         JPanel planetsColumn = new JPanel(new BorderLayout(0, UiConstants.ROW_GAP));
         planetsColumn.setOpaque(false);
+        planetsColumn.add(UiComponents.sectionHeader("Planets",
+                "Each planet has its own template and input capacity."), BorderLayout.NORTH);
         planetsColumn.add(planetsContainer, BorderLayout.CENTER);
         planetsColumn.add(addBar, BorderLayout.SOUTH);
-        JScrollPane planetsScroll = new JScrollPane(planetsColumn);
-        planetsScroll.setBorder(BorderFactory.createTitledBorder("Planets"));
-        planetsScroll.getVerticalScrollBar().setUnitIncrement(16);
-
         // ---- CALCULATE (primary action, slightly emphasized) ----
         calculateButton = new JButton("Calculate Allocation");
         calculateButton.setEnabled(false);
-        calculateButton.setFont(UiConstants.BODY_BOLD_FONT.deriveFont(14f));
+        UiComponents.primaryButton(calculateButton);
         calculateButton.setToolTipText("Allocate shared inventory across all planets (fair runtime)");
         calculateButton.addActionListener(e -> onCalculate());
-        JPanel calcBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, UiConstants.ROW_GAP));
+        JPanel calcBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, UiConstants.ROW_GAP));
+        calcBar.setOpaque(false);
+        calculateStateLabel.setFont(UiConstants.METRIC_CAPTION_FONT);
+        calculateStateLabel.setForeground(UiConstants.SECONDARY);
+        calcBar.add(calculateStateLabel);
+        calcBar.add(javax.swing.Box.createHorizontalStrut(UiConstants.CARD_GAP));
         calcBar.add(calculateButton);
 
-        JPanel left = new JPanel(new BorderLayout(0, UiConstants.SECTION_GAP));
-        left.setBorder(BorderFactory.createEmptyBorder(UiConstants.INNER_PADDING,
-                UiConstants.INNER_PADDING, UiConstants.INNER_PADDING, UiConstants.CARD_GAP));
-        left.add(inventoryPanel, BorderLayout.NORTH);
-        left.add(planetsScroll, BorderLayout.CENTER);
-        left.add(calcBar, BorderLayout.SOUTH);
+        PageColumn leftContent = new PageColumn();
+        leftContent.setLayout(new javax.swing.BoxLayout(leftContent, javax.swing.BoxLayout.Y_AXIS));
+        leftContent.setBackground(UiConstants.CARD_BACKGROUND);
+        leftContent.setBorder(UiComponents.cardBorder());
+        inventoryPanel.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+        planetsColumn.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+        calcBar.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
+        leftContent.add(inventoryPanel);
+        leftContent.add(javax.swing.Box.createVerticalStrut(UiConstants.SECTION_GAP));
+        leftContent.add(planetsColumn);
+        leftContent.add(javax.swing.Box.createVerticalStrut(UiConstants.SECTION_GAP));
+        leftContent.add(calcBar);
+        JScrollPane left = new JScrollPane(leftContent,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        left.setBorder(null);
+        left.getVerticalScrollBar().setUnitIncrement(18);
+        MouseWheelForwarder.install(leftContent, left);
 
         // ---- RIGHT COLUMN: results (own scroll; the main visual weight) ----
         resultPanel = new AllocationResultPanel();
-        JScrollPane right = new JScrollPane(resultPanel);
+        JScrollPane right = new JScrollPane(resultPanel,
+                JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+        right.setBorder(null);
+        right.getViewport().setBackground(UiConstants.PAGE_BACKGROUND);
         right.getVerticalScrollBar().setUnitIncrement(16);
-        right.setBorder(BorderFactory.createEmptyBorder(UiConstants.INNER_PADDING,
-                UiConstants.CARD_GAP, UiConstants.INNER_PADDING, UiConstants.INNER_PADDING));
+        MouseWheelForwarder.install(resultPanel, right);
 
         javax.swing.JSplitPane split =
                 new javax.swing.JSplitPane(javax.swing.JSplitPane.HORIZONTAL_SPLIT, left, right);
         split.setResizeWeight(0.40);
         split.setContinuousLayout(true);
-        split.setBorder(null);
+        split.setBorder(BorderFactory.createEmptyBorder(0, UiConstants.INNER_PADDING,
+                UiConstants.INNER_PADDING, UiConstants.INNER_PADDING));
         add(split, BorderLayout.CENTER);
+        updateCalculateEnabled();
+    }
+
+    /** Viewport-width tracking prevents content from forcing page-level horizontal scrolling. */
+    private static final class PageColumn extends JPanel implements javax.swing.Scrollable {
+        @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+        @Override public int getScrollableUnitIncrement(java.awt.Rectangle r, int o, int d) { return 18; }
+        @Override public int getScrollableBlockIncrement(java.awt.Rectangle r, int o, int d) {
+            return Math.max(18, r.height - 36);
+        }
+        @Override public boolean getScrollableTracksViewportWidth() { return true; }
+        @Override public boolean getScrollableTracksViewportHeight() { return false; }
     }
 
     // ---- planet management ----
 
     /** Adds a new planet card (renumbered to its insertion position). */
-    void addPlanet() {   // package-visible for the GUI smoke test
+    PlanetPanel addPlanet() {   // package-visible for the GUI smoke test
         long id = nextPlanetId.getAndIncrement();
         PlanetPanel panel = new PlanetPanel(id, new PlanetPanel.Listener() {
             @Override
@@ -155,6 +195,11 @@ public final class AllocationFrame extends JPanel {
             }
 
             @Override
+            public void duplicateRequested(long planetId) {
+                duplicatePlanet(planetId);
+            }
+
+            @Override
             public void removeRequested(long planetId) {
                 removePlanet(planetId);
             }
@@ -166,6 +211,19 @@ public final class AllocationFrame extends JPanel {
         panel.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
         planetsContainer.add(panel);
         renumberPlanets();
+        resultPanel.clear();
+        updateCalculateEnabled();
+        planetsContainer.revalidate();
+        planetsContainer.repaint();
+        return panel;
+    }
+
+    /** Duplicate raw template text, loaded immutable model, summary and capacity. */
+    void duplicatePlanet(long planetId) {
+        PlanetPanel source = panelById(planetId);
+        if (source == null) return;
+        PlanetPanel duplicate = addPlanet();
+        source.copyStateTo(duplicate);
         resultPanel.clear();
         updateCalculateEnabled();
         planetsContainer.revalidate();
@@ -326,6 +384,7 @@ public final class AllocationFrame extends JPanel {
         }
         panel.clearLoadedTemplate();
         panel.templatePanel.showError(message);
+        resultPanel.clear();
         updateCalculateEnabled();
     }
 
@@ -420,13 +479,35 @@ public final class AllocationFrame extends JPanel {
             List<AllocationReadiness.PlanetInput> inputs = planetPanels.stream()
                     .map(p -> new AllocationReadiness.PlanetInput(p.templateLoaded(), p.capacityValid()))
                     .toList();
-            calculateButton.setEnabled(AllocationReadiness.ready(inventoryReady, inputs));
+            boolean ready = AllocationReadiness.ready(inventoryReady, inputs);
+            calculateButton.setEnabled(ready);
+            if (ready) {
+                calculateStateLabel.setText("Ready");
+                calculateStateLabel.setForeground(UiConstants.SUCCESS);
+                calculateButton.setToolTipText(
+                        "Allocate shared inventory across all planets (fair runtime)");
+            } else {
+                String reason = disabledReason(inputs);
+                calculateStateLabel.setText(reason);
+                calculateStateLabel.setForeground(UiConstants.SECONDARY);
+                calculateButton.setToolTipText(reason);
+            }
         };
         if (SwingUtilities.isEventDispatchThread()) {
             update.run();
         } else {
             SwingUtilities.invokeLater(update);
         }
+    }
+
+    private String disabledReason(List<AllocationReadiness.PlanetInput> inputs) {
+        if (!inventoryReady) return "Parse inventory to continue";
+        if (inputs.isEmpty()) return "Add a planet to continue";
+        for (int i = 0; i < inputs.size(); i++) {
+            if (!inputs.get(i).templateLoaded()) return "Load Planet " + (i + 1) + " template";
+            if (!inputs.get(i).capacityValid()) return "Enter Planet " + (i + 1) + " capacity";
+        }
+        return "Complete the required inputs";
     }
 
     // ---- error message mapping (inline, never stack traces) ----

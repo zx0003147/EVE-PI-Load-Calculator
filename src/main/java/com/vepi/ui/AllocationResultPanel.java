@@ -43,7 +43,7 @@ import java.util.List;
  * INVENTORY table closes the panel inside a collapsed section: secondary
  * data must not steal the result space.
  */
-public final class AllocationResultPanel extends JPanel {
+public final class AllocationResultPanel extends JPanel implements javax.swing.Scrollable {
 
     /** Everything needed to render one planet's result section. */
     public record PlanetView(PlanetAllocation allocation,
@@ -76,7 +76,10 @@ public final class AllocationResultPanel extends JPanel {
     private UsageTableModel usageModel = new UsageTableModel(List.of());
 
     AllocationResultPanel() {
-        setLayout(new javax.swing.BoxLayout(this, javax.swing.BoxLayout.Y_AXIS));
+        setLayout(new FullWidthStackLayout());
+        setBackground(UiConstants.PAGE_BACKGROUND);
+        setBorder(BorderFactory.createEmptyBorder(0, UiConstants.CARD_GAP,
+                UiConstants.INNER_PADDING, 0));
         showPlaceholder();
     }
 
@@ -115,15 +118,14 @@ public final class AllocationResultPanel extends JPanel {
     private JPanel buildPlanetSection(PlanetSection section) {
         PlanetAllocation allocation = section.view.allocation();
 
-        JPanel card = new JPanel(new BorderLayout(0, UiConstants.ROW_GAP));
-        card.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createTitledBorder(allocation.name() + " \u2014 "
-                        + section.view.templateDisplayName()),
-                BorderFactory.createEmptyBorder(4, UiConstants.INNER_PADDING,
-                        UiConstants.INNER_PADDING, UiConstants.INNER_PADDING)));
+        JPanel card = UiComponents.card();
+        card.setLayout(new BorderLayout(0, UiConstants.ROW_GAP));
+        card.add(UiComponents.sectionHeader(allocation.name() + " \u2014 "
+                + section.view.templateDisplayName(),
+                "Allocated load and sustainable output for this planet."), BorderLayout.NORTH);
 
         JPanel center = new JPanel();
-        center.setLayout(new javax.swing.BoxLayout(center, javax.swing.BoxLayout.Y_AXIS));
+        center.setLayout(new FullWidthStackLayout());
         center.setOpaque(false);
 
         if (allocation.blockCount() == 0) {
@@ -155,6 +157,7 @@ public final class AllocationResultPanel extends JPanel {
             }
 
             JButton copy = new JButton("Copy Planet Load");
+            UiComponents.secondaryButton(copy);
             copy.addActionListener(e -> copyToClipboard(CopyText.planetLoad(allocation)));
             JPanel copyBar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
             copyBar.add(copy);
@@ -189,14 +192,12 @@ public final class AllocationResultPanel extends JPanel {
             output = Formats.amount(first.quantity()) + " " + first.commodity().name()
                     + (outputs.size() > 1 ? " +" + (outputs.size() - 1) + " more" : "");
         }
-        String capacity = zeroBlocks ? "\u2014"
-                : Formats.capacityUsed(a.usedCapacity(), a.request().capacity());
-        return metricStripValues(runtime, blocks, output, capacity);
+        return metricStripValues(runtime, blocks, output);
     }
 
     private static JPanel metricStripValues(String... values) {
-        String[] captions = {"RUNTIME", "BLOCKS", "OUTPUT", "CAPACITY"};
-        JPanel strip = new JPanel(new GridLayout(1, captions.length, UiConstants.CARD_GAP, 0));
+        String[] captions = {"RUNTIME", "BLOCKS", "OUTPUT"};
+        JPanel strip = new JPanel(new java.awt.GridBagLayout());
         strip.setOpaque(false);
         for (int i = 0; i < captions.length; i++) {
             JPanel cell = new JPanel(new GridLayout(2, 1, 0, 1));
@@ -204,16 +205,45 @@ public final class AllocationResultPanel extends JPanel {
             JLabel caption = new JLabel(captions[i]);
             caption.setFont(UiConstants.METRIC_CAPTION_FONT);
             caption.setForeground(UiConstants.SECONDARY);
-            JLabel value = new JLabel(values[i]);
-            value.setFont(UiConstants.METRIC_FONT);
+            JComponent value;
+            if (i == 2) {
+                JTextArea output = new JTextArea(values[i]);
+                output.setEditable(false);
+                output.setOpaque(false);
+                output.setLineWrap(true);
+                output.setWrapStyleWord(true);
+                output.setRows(2);
+                output.setFont(UiConstants.METRIC_FONT);
+                value = output;
+            } else {
+                JLabel label = new JLabel(values[i]);
+                label.setFont(UiConstants.METRIC_FONT);
+                value = label;
+            }
             cell.add(caption);
             cell.add(value);
-            strip.add(cell);
+            java.awt.GridBagConstraints gbc = new java.awt.GridBagConstraints();
+            gbc.gridx = i;
+            gbc.gridy = 0;
+            gbc.weightx = i == 2 ? 2.0 : 1.0;
+            gbc.fill = java.awt.GridBagConstraints.HORIZONTAL;
+            gbc.anchor = java.awt.GridBagConstraints.NORTHWEST;
+            gbc.insets = new java.awt.Insets(0, 0, 0,
+                    i + 1 < captions.length ? UiConstants.CARD_GAP : 0);
+            strip.add(cell, gbc);
         }
         strip.setAlignmentX(Component.LEFT_ALIGNMENT);
         strip.setBorder(BorderFactory.createEmptyBorder(0, 0, UiConstants.ROW_GAP, 0));
         return strip;
     }
+
+    @Override public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+    @Override public int getScrollableUnitIncrement(java.awt.Rectangle r, int o, int d) { return 18; }
+    @Override public int getScrollableBlockIncrement(java.awt.Rectangle r, int o, int d) {
+        return Math.max(18, r.height - 36);
+    }
+    @Override public boolean getScrollableTracksViewportWidth() { return true; }
+    @Override public boolean getScrollableTracksViewportHeight() { return false; }
 
     private static String zeroBlockText(PiCalculatorController.ZeroBlockExplanation explanation) {
         StringBuilder sb = new StringBuilder();
@@ -311,6 +341,7 @@ public final class AllocationResultPanel extends JPanel {
     }
 
     private static void styleTable(JTable table) {
+        UiComponents.table(table);
         table.setFillsViewportHeight(false);
         table.setAutoResizeMode(JTable.AUTO_RESIZE_ALL_COLUMNS);
         table.setRowHeight(table.getRowHeight() + 2);

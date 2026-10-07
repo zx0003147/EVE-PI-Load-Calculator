@@ -9,8 +9,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import javax.swing.SwingUtilities;
+import java.awt.Component;
+import java.awt.Container;
 import java.awt.GraphicsEnvironment;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -74,15 +75,58 @@ class AppFrameSmokeTest {
         SwingUtilities.invokeAndWait(() ->
                 panel.inventoryLoaded(controller.parseInventory("Biocells 46080\n")));
         SwingUtilities.invokeAndWait(() ->
-                assertFalse(panel.calculateButton.isEnabled(), "template missing"));
+                assertFalse(panel.calculateButton.isEnabled(), "P4 missing"));
 
-        // template alone (fresh panel state) would not be enough either — but
-        // with both set it must enable. Load the real full-chain template.
-        String template = Files.readString(Path.of("data/templates/Pandogodzilla.json"));
+        // Select by the combo's typeID-backed value, not by display text.
+        SwingUtilities.invokeAndWait(() -> selectP4(panel, 2868L));
         SwingUtilities.invokeAndWait(() ->
-                panel.templateLoaded(controller.loadPlanetTemplate(template)));
-        SwingUtilities.invokeAndWait(() ->
-                assertTrue(panel.calculateButton.isEnabled(), "both inputs ready"));
+                {
+                    assertTrue(panel.calculateButton.isEnabled(), "both inputs ready");
+                    String hierarchy = hierarchyText(panel.recipeHierarchyPanel);
+                    assertTrue(hierarchy.contains("Integrity Response Drones × 1"));
+                    assertTrue(hierarchy.contains("P3 Balance Block"));
+                    assertTrue(hierarchy.contains("P2 Balance Block"));
+                    assertTrue(hierarchy.contains("├─ Gel-Matrix Biopaste × 6"));
+                    assertTrue(hierarchy.contains("Biocells × 20"));
+                    assertFalse(hierarchy.contains("P4 recipe:"));
+                });
+    }
+
+    @Test
+    void changingP4ImmediatelyRefreshesRecipeAndInvalidatesResult() throws Exception {
+        AtomicReference<BalanceInventoryPanel> ref = new AtomicReference<>();
+        SwingUtilities.invokeAndWait(() -> ref.set(new BalanceInventoryPanel(
+                new BalanceInventoryController(controller))));
+        BalanceInventoryPanel panel = ref.get();
+        SwingUtilities.invokeAndWait(() -> {
+            panel.inventoryLoaded(controller.parseInventory("Biocells 100"));
+            selectP4(panel, 2868L);
+            panel.showPlan(new BalanceInventoryPanel.BalanceRun(
+                    new BalanceInventoryController(controller).balance(
+                            controller.parseInventory("Biocells 100").snapshot(), 2868L)));
+            assertTrue(panel.copyShoppingButton.isEnabled());
+            String oldRecipe = hierarchyText(panel.recipeHierarchyPanel);
+            int other = panel.p4Combo.getSelectedIndex() == 0 ? 1 : 0;
+            panel.p4Combo.setSelectedIndex(other);
+            assertFalse(panel.copyShoppingButton.isEnabled());
+            assertEquals(0, panel.p2Model.getRowCount());
+            String newRecipe = hierarchyText(panel.recipeHierarchyPanel);
+            assertFalse(newRecipe.equals(oldRecipe));
+            assertTrue(newRecipe.contains("P4 → P3 → P2") || newRecipe.contains("P2 Balance Block"));
+        });
+    }
+
+    private static String hierarchyText(Container root) {
+        StringBuilder text = new StringBuilder();
+        for (Component component : root.getComponents()) {
+            if (component instanceof javax.swing.JLabel label) {
+                text.append(label.getText()).append('\n');
+            }
+            if (component instanceof Container child) {
+                text.append(hierarchyText(child));
+            }
+        }
+        return text.toString();
     }
 
     @Test
@@ -98,35 +142,36 @@ class AppFrameSmokeTest {
                 Oxides 74225
                 Hazmat Detection Systems 41
                 """;
-        String template = Files.readString(Path.of("data/templates/Pandogodzilla.json"));
-
         SwingUtilities.invokeAndWait(() -> {
             panel.inventoryLoaded(controller.parseInventory(inventory));
-            panel.templateLoaded(controller.loadPlanetTemplate(template));
-            // the exact call the Calculate worker makes when done:
+            selectP4(panel, 2868L);
             panel.showPlan(new BalanceInventoryPanel.BalanceRun(
                     new BalanceInventoryController(controller).balance(
-                            controller.parseInventory(inventory).snapshot(),
-                            controller.loadPlanetTemplate(template).plan())));
+                            controller.parseInventory(inventory).snapshot(), 2868L)));
         });
 
         SwingUtilities.invokeAndWait(() -> {
-            // ALL 9 template P2 rows appear (current=0 for the 7 not owned);
-            // the P3 stock shows as the single unused row instead.
+            // All recipe-related P2 and direct P3 rows are rendered separately.
             assertEquals(9, panel.balanceModel.getRowCount());
             assertEquals("Biocells", panel.balanceModel.getValueAt(0, 0));
             assertEquals("46,080", panel.balanceModel.getValueAt(0, 2), "current");
-            assertEquals(1, panel.unusedModel.getRowCount());
-            assertEquals("Hazmat Detection Systems", panel.unusedModel.getValueAt(0, 0));
+            assertEquals(3, panel.p3Model.getRowCount());
+            assertEquals(0, panel.unusedModel.getRowCount());
 
             String summaryText = panel.summary.getText();
-            // Oxides 74225 drives: ceil(74225/60) = 1238 blocks (spec §10)
-            assertTrue(summaryText.contains("Target production blocks: 1,238"),
+            assertTrue(summaryText.contains("P2 target blocks: 3,712"),
                     () -> summaryText);
-            // expected output row: 3 IRD/block x 1238 blocks
-            assertEquals(1, panel.outputModel.getRowCount());
-            assertEquals("Integrity Response Drones", panel.outputModel.getValueAt(0, 0));
-            assertEquals("3,714", panel.outputModel.getValueAt(0, 1));
+            assertTrue(summaryText.contains("P3 target blocks: 7"), () -> summaryText);
         });
+    }
+
+    private static void selectP4(BalanceInventoryPanel panel, long typeId) {
+        for (int i = 0; i < panel.p4Combo.getItemCount(); i++) {
+            if (panel.p4Combo.getItemAt(i).typeId() == typeId) {
+                panel.p4Combo.setSelectedIndex(i);
+                return;
+            }
+        }
+        throw new AssertionError("P4 not found: " + typeId);
     }
 }

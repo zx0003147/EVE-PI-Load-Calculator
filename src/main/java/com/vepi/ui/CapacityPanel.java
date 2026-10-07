@@ -35,8 +35,12 @@ public final class CapacityPanel extends JPanel {
 
     CapacityPanel(Listener listener) {
         this.listener = listener;
-        setBorder(BorderFactory.createTitledBorder("Available Input Capacity"));
+        setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
         setLayout(new FlowLayout(FlowLayout.LEFT, 8, 6));
+
+        JLabel title = new JLabel("Available input capacity");
+        title.setFont(UiConstants.BODY_BOLD_FONT);
+        add(title);
 
         field = new JTextField(12);
         field.setFont(field.getFont().deriveFont(field.getFont().getSize() + 2f));

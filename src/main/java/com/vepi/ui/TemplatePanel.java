@@ -62,8 +62,10 @@ public final class TemplatePanel extends JPanel {
 
     TemplatePanel(Listener listener) {
         this.listener = listener;
-        setBorder(BorderFactory.createTitledBorder("PI Template"));
+        setBorder(BorderFactory.createEmptyBorder());
         setLayout(new BorderLayout(UiConstants.INNER_PADDING, UiConstants.ROW_GAP));
+        add(UiComponents.sectionHeader("PI Template",
+                "Paste template JSON or open it from a file."), BorderLayout.NORTH);
 
         // --- center: the paste area (monospace, scrollable, editable) ---
         textArea = new JTextArea();
@@ -93,12 +95,16 @@ public final class TemplatePanel extends JPanel {
         error.setFont(UiConstants.BODY_FONT);
 
         pasteButton = new JButton("Paste");
+        UiComponents.secondaryButton(pasteButton);
         pasteButton.addActionListener(e -> pasteFromClipboard());
         loadButton = new JButton("Load");
+        UiComponents.primaryButton(loadButton);
         loadButton.addActionListener(e -> onLoadClicked());
         clearButton = new JButton("Clear");
+        UiComponents.secondaryButton(clearButton);
         clearButton.addActionListener(e -> clearAll());
         openButton = new JButton("Open File...");
+        UiComponents.secondaryButton(openButton);
         openButton.addActionListener(e -> chooseFile());
 
         JPanel buttonRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT,
@@ -108,11 +114,11 @@ public final class TemplatePanel extends JPanel {
         buttonRow.add(clearButton);
         buttonRow.add(openButton);
 
-        JPanel statusRow = new JPanel(new BorderLayout(8, 2));
+        JPanel statusRow = new JPanel(new BorderLayout(8, 4));
         statusRow.setOpaque(false);
-        statusRow.add(summary, BorderLayout.CENTER);
-        statusRow.add(buttonRow, BorderLayout.EAST);
-        statusRow.add(error, BorderLayout.SOUTH);
+        statusRow.add(summary, BorderLayout.NORTH);
+        statusRow.add(error, BorderLayout.CENTER);
+        statusRow.add(buttonRow, BorderLayout.SOUTH);
 
         JPanel south = new JPanel(new BorderLayout(0, UiConstants.ROW_GAP));
         south.setOpaque(false);

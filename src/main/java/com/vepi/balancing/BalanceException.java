@@ -22,4 +22,12 @@ public class BalanceException extends RuntimeException {
             super("This template does not contain a P2 → P4 production chain.");
         }
     }
+
+    /** The solver exposes neither P2 nor P3 external requirements. */
+    public static final class NoBalanceRequirements extends BalanceException {
+
+        public NoBalanceRequirements() {
+            super("This template has no external P2 or P3 requirements to balance.");
+        }
+    }
 }

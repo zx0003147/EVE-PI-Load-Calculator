@@ -19,9 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * use), then captures each tab to out/ui-allocation.png / out/ui-balance.png
  * for manual visual review.
  *
- * Numbers rendered (must match spec §41):
- *   Load Allocation : 133 blocks / 7980 each / 399 IRD / 53,865 used / 135 remaining
- *   Balance         : 1,238 blocks / 51d 14h / 3,714 IRD / 115,731.75 m3 / Oxides +55
+ * The Balance tab uses the product-driven IRD workflow (typeID 2868).
  */
 public class UiScreenshot {
 
@@ -58,6 +56,15 @@ public class UiScreenshot {
         AllocationFrame alloc = (AllocationFrame) tabs.getComponentAt(0);
         BalanceInventoryPanel balance = (BalanceInventoryPanel) tabs.getComponentAt(1);
 
+        SwingUtilities.invokeAndWait(() -> {
+            app.pack();
+            app.setLocationRelativeTo(null);
+            app.setAlwaysOnTop(true);
+            app.setVisible(true);
+        });
+        Thread.sleep(400);
+        capture(app, "out/ui-allocation-disabled.png");
+
         // ---- Tab 0: Load Allocation — Pandogodzilla @ 54000 m3 ----
         SwingUtilities.invokeAndWait(() -> {
             var status = controller.parseInventory(REAL_INVENTORY);
@@ -71,23 +78,26 @@ public class UiScreenshot {
             alloc.showPlan(run);
         });
 
-        SwingUtilities.invokeAndWait(() -> {
-            app.pack();
-            app.setLocationRelativeTo(null);
-            app.setAlwaysOnTop(true);
-            app.setVisible(true);
-        });
+        SwingUtilities.invokeAndWait(app::validate);
         Thread.sleep(800);
         capture(app, "out/ui-allocation.png");
+        SwingUtilities.invokeAndWait(() -> scrollAllocationInputToBottom(alloc));
+        Thread.sleep(300);
+        capture(app, "out/ui-allocation-bottom.png");
+        captureButtonStates(app, alloc);
 
-        // ---- Tab 1: Balance Inventory — real inventory vs Pandogodzilla ----
+        // ---- Tab 1: Balance Inventory — real inventory + IRD product ----
         SwingUtilities.invokeAndWait(() -> {
             tabs.setSelectedIndex(1);
             var status = controller.parseInventory(REAL_INVENTORY);
             balance.inventoryLoaded(status);
-            balance.templateLoaded(controller.loadPlanetTemplate(templateJson));
-            var plan = new BalanceInventoryController(controller).balance(
-                    status.snapshot(), controller.loadPlanetTemplate(templateJson).plan());
+            for (int i = 0; i < balance.p4Combo.getItemCount(); i++) {
+                if (balance.p4Combo.getItemAt(i).typeId() == 2868L) {
+                    balance.p4Combo.setSelectedIndex(i);
+                    break;
+                }
+            }
+            var plan = new BalanceInventoryController(controller).balance(status.snapshot(), 2868L);
             balance.showPlan(new BalanceInventoryPanel.BalanceRun(plan));
         });
         Thread.sleep(800);
@@ -95,7 +105,10 @@ public class UiScreenshot {
 
         SwingUtilities.invokeLater(() -> app.setAlwaysOnTop(false));
 
-        System.out.println("screenshots written: out/ui-allocation.png, out/ui-balance.png");
+        System.out.println("screenshots written: out/ui-allocation.png, "
+                + "out/ui-allocation-disabled.png, "
+                + "out/ui-allocation-bottom.png, out/ui-allocation-hover.png, "
+                + "out/ui-allocation-pressed.png, out/ui-balance.png");
         controller.close();
         System.exit(0);
     }
@@ -105,5 +118,45 @@ public class UiScreenshot {
         bounds.setLocation(app.getLocationOnScreen());
         BufferedImage img = new Robot().createScreenCapture(bounds);
         ImageIO.write(img, "png", Path.of(path).toFile());
+    }
+
+    private static void scrollAllocationInputToBottom(java.awt.Container root) {
+        for (java.awt.Component child : root.getComponents()) {
+            if (child instanceof javax.swing.JScrollPane scroll) {
+                java.awt.Component view = scroll.getViewport().getView();
+                if (view != null && view.getClass().getName().contains("AllocationFrame$PageColumn")) {
+                    scroll.getVerticalScrollBar().setValue(scroll.getVerticalScrollBar().getMaximum());
+                }
+            }
+            if (child instanceof java.awt.Container container) {
+                scrollAllocationInputToBottom(container);
+            }
+        }
+    }
+
+    private static void captureButtonStates(AppFrame app, AllocationFrame alloc) throws Exception {
+        SwingUtilities.invokeAndWait(alloc.resultPanel::clear);
+        Robot robot = new Robot();
+        java.awt.Point p = alloc.calculateButton.getLocationOnScreen();
+        int x = p.x + alloc.calculateButton.getWidth() / 2;
+        int y = p.y + alloc.calculateButton.getHeight() / 2;
+        robot.mouseMove(x, y);
+        robot.delay(250);
+        capture(app, "out/ui-allocation-hover.png");
+        robot.mousePress(java.awt.event.InputEvent.BUTTON1_DOWN_MASK);
+        robot.delay(150);
+        capture(app, "out/ui-allocation-pressed.png");
+        robot.mouseRelease(java.awt.event.InputEvent.BUTTON1_DOWN_MASK);
+        boolean rendered = false;
+        for (int attempt = 0; attempt < 40 && !rendered; attempt++) {
+            robot.delay(50);
+            AtomicReference<Boolean> state = new AtomicReference<>(false);
+            SwingUtilities.invokeAndWait(() -> state.set(
+                    alloc.resultPanel.sections.size() == 1
+                            && alloc.calculateButton.isEnabled()
+                            && "Calculate Allocation".equals(alloc.calculateButton.getText())));
+            rendered = state.get();
+        }
+        if (!rendered) throw new AssertionError("real mouse click did not render allocation result");
     }
 }

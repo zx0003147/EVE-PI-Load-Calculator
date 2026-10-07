@@ -5,7 +5,7 @@ import com.vepi.app.PiCalculatorController;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JPanel;
-import javax.swing.border.TitledBorder;
+import javax.swing.JLabel;
 import java.awt.BorderLayout;
 import java.awt.FlowLayout;
 import java.nio.file.Path;
@@ -28,21 +28,25 @@ final class PlanetPanel extends JPanel {
 
         void capacityValidityChanged(long planetId, boolean valid);
 
+        void duplicateRequested(long planetId);
+
         void removeRequested(long planetId);
     }
 
     private final long id;
-    private final TitledBorder border;
+    private final JLabel titleLabel = new JLabel("Planet");
     final TemplatePanel templatePanel;         // package-visible for the GUI smoke test
     final CapacityPanel capacityPanel;         // package-visible for the GUI smoke test
+    final JButton duplicateButton = new JButton("Duplicate");
     private PiCalculatorController.PlanetTemplate loadedTemplate;   // null until loaded
     private boolean capacityValid = false;
 
     PlanetPanel(long id, Listener listener) {
         this.id = id;
-        this.border = BorderFactory.createTitledBorder("Planet");
-        setBorder(border);
+        setBorder(UiComponents.cardBorder());
         setLayout(new BorderLayout(8, 8));
+        titleLabel.setFont(UiConstants.TITLE_FONT);
+        add(titleLabel, BorderLayout.NORTH);
 
         templatePanel = new TemplatePanel(new TemplatePanel.Listener() {
             @Override
@@ -69,10 +73,14 @@ final class PlanetPanel extends JPanel {
         });
         south.add(capacityPanel, BorderLayout.CENTER);
 
+        UiComponents.secondaryButton(duplicateButton);
+        duplicateButton.addActionListener(e -> listener.duplicateRequested(id));
         JButton remove = new JButton("Remove");
-        remove.setFont(UiConstants.BODY_FONT);
+        UiComponents.secondaryButton(remove);
         remove.addActionListener(e -> listener.removeRequested(id));
         JPanel removeBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        removeBar.add(duplicateButton);
+        removeBar.add(javax.swing.Box.createHorizontalStrut(UiConstants.CARD_GAP));
         removeBar.add(remove);
         south.add(removeBar, BorderLayout.EAST);
         add(south, BorderLayout.SOUTH);
@@ -84,8 +92,7 @@ final class PlanetPanel extends JPanel {
 
     /** Display number is the frame's insertion order, not the internal id. */
     void setDisplayNumber(int n) {
-        border.setTitle("Planet " + n);
-        repaint();
+        titleLabel.setText("Planet " + n);
     }
 
     PiCalculatorController.PlanetTemplate loadedTemplate() {
@@ -114,5 +121,15 @@ final class PlanetPanel extends JPanel {
 
     boolean ready() {
         return templateLoaded() && capacityValid;
+    }
+
+    /** Copies UI/model state into an already-created independent card. */
+    void copyStateTo(PlanetPanel target) {
+        target.templatePanel.setTemplateText(templatePanel.getTemplateText());
+        if (loadedTemplate != null) {
+            target.setLoadedTemplate(loadedTemplate); // immutable domain model; UI state is not shared
+            target.templatePanel.showSummary(loadedTemplate.summary());
+        }
+        target.capacityPanel.setCapacityText(capacityText());
     }
 }
